@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+python-multipart
+tensorflow
+tensorflow-hub
+setuptools<81   # tensorflow-hub imports pkg_resources, removed in setuptools 81+
+librosa
+soundfile
+numpy
+supabase
+python-dotenv

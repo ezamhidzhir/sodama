@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# ML models & data
+*.h5
+*.tflite
+models/
+backend/yamnet_cache/
+*.wav
+*.mp3
+!docs/samples/*.wav
+
+# Node (frontend, if needed later)
+node_modules/
+dist/
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# PlatformIO / Arduino build artifacts
+firmware/.pio/
+firmware/build/
