@@ -26,3 +26,15 @@ Keputusan teknikal yang di-lock sebelum development bermula. Setiap keputusan ad
 - [x] Create tables + RLS policies — 6 tables applied dari `supabase/migrations/20260708000001_initial_schema.sql`
 - [x] Setup Supabase Storage bucket `audio-files` dengan policy (private, 50MB limit, audio MIME sahaja)
 - [x] Test upload/download file guna Supabase Python client — `backend/test_supabase_storage.py` lulus (upload → insert → download → query → cleanup)
+
+### Fasa 2 — Backend Core + YAMNet Inference (target: 2-3 minggu) — **SIAP 8 Julai 2026**
+- [x] `POST /upload` — validate WAV/MP3/FLAC/OGG, convert ke 16kHz mono 16-bit, upload Storage, insert row
+- [x] Pipeline klasifikasi background task — status `pending → processing → done/error`; YAMNet 0.96s windows (hop 0.48s), top-3 per window + confidence dalam `classifications`
+- [x] `GET /audio` — pagination, filter by class (inner join), min_confidence, source, status, date range
+- [x] `GET /audio/{id}` — detail + waveform peaks (600 points, precomputed) + per-window classifications + top-5 aggregate + signed download URL
+- [x] `POST /datasets`, `GET /datasets`, `POST /datasets/{id}/items`, `DELETE` items/dataset
+- [x] `GET /datasets/{id}/export` — ZIP audio + manifest.csv/json dengan auto-label (top mean-confidence class)
+- [x] `POST /ingest` — raw PCM 16-bit dari ESP32, API key auth (`devices` table), auto resample, update `last_seen`
+- [x] `POST /devices` / `GET /devices` — device registration, API key generated sekali
+- [x] Migration 3: column `status` + `waveform` (jsonb) dalam `audio_files`
+- [x] E2E tested: upload → classify (chirp → Sine wave/Synthesizer ✓), filter search, ingest + 401 auth, dataset export zip

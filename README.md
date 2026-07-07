@@ -47,6 +47,29 @@ copy .env.example .env               # fill in Supabase credentials
 .venv/Scripts/python test_supabase_storage.py
 ```
 
+### Run the API server (Fasa 2)
+
+```powershell
+cd backend
+.venv/Scripts/python -m uvicorn app.main:app --reload
+```
+
+Swagger UI: http://127.0.0.1:8000/docs
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /upload` | Upload WAV/MP3/FLAC/OGG → standardized to 16kHz mono → classified in background |
+| `GET /audio` | List/search: pagination, `class_name`, `min_confidence`, `source`, `status`, date range |
+| `GET /audio/{id}` | Detail: waveform peaks, per-window classifications, top classes, signed download URL |
+| `POST /datasets` + `/items` | Curate datasets (many-to-many with audio files) |
+| `GET /datasets/{id}/export` | ZIP of audio + `manifest.csv`/`manifest.json` with auto-labels |
+| `POST /ingest` | ESP32 raw PCM ingest — `X-API-Key` auth against `devices` table |
+| `POST /devices` | Register a device; API key returned once |
+
+Classification runs as a FastAPI background task: `audio_files.status` goes
+`pending → processing → done` (or `error`), and per-0.96s-window top-3 YAMNet
+classes land in the `classifications` table.
+
 ## Database
 
 Schema lives in [docs/database-schema.md](docs/database-schema.md); the applied migration is mirrored in [supabase/migrations/](supabase/migrations/). Tables: `audio_files`, `classifications`, `metadata`, `datasets`, `dataset_items`, `devices` — all with Row Level Security enabled.
