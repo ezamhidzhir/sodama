@@ -76,16 +76,55 @@ Keep that terminal open — closing it (or `Ctrl+C`) stops the server and
 | Endpoint | Purpose |
 |---|---|
 | `POST /upload` | Upload WAV/MP3/FLAC/OGG → standardized to 16kHz mono → classified in background |
-| `GET /audio` | List/search: pagination, `class_name`, `min_confidence`, `source`, `status`, date range |
+| `GET /audio` | List/search: pagination, `class_name`, `min_confidence`, `source`, `status`, `review_status`, date range |
 | `GET /audio/{id}` | Detail: waveform peaks, per-window classifications, top classes, signed download URL |
+| `PATCH /audio/{id}/review` | Approve, correct or reject a label |
+| `POST /audio/review` | Same verdict applied to many files at once |
 | `POST /datasets` + `/items` | Curate datasets (many-to-many with audio files) |
-| `GET /datasets/{id}/export` | ZIP of audio + `manifest.csv`/`manifest.json` with auto-labels |
+| `GET /datasets/{id}/export` | ZIP of audio + `metadata.csv`/`metadata.json` + `README.md`, optional train/val/test split |
 | `POST /ingest` | ESP32 raw PCM ingest — `X-API-Key` auth against `devices` table |
 | `POST /devices` | Register a device; API key returned once |
 
 Classification runs as a FastAPI background task: `audio_files.status` goes
 `pending → processing → done` (or `error`), and per-0.96s-window top-3 YAMNet
 classes land in the `classifications` table.
+
+## Label review
+
+YAMNet's output is a starting point, not ground truth — it labels a 440 Hz test
+tone "Telephone". Every clip therefore carries a second, independent state:
+`review_status` is `unreviewed` until a person approves, corrects, or rejects it
+on the audio detail page.
+
+That verdict is what the export reports. Each manifest row carries a
+`label_source` of `human_confirmed`, `human_corrected`, or `auto`, so whoever
+trains on the data can tell verified labels from unchecked guesses — and filter
+on it. Rejected clips are never exported.
+
+## Dataset export
+
+`GET /datasets/{id}/export` produces a ZIP laid out the way HuggingFace's
+`audiofolder` loader expects:
+
+```
+metadata.csv     file_name, label, label_source, split, + audio and review columns
+metadata.json    the same rows
+train.csv        pre-filtered subsets, when splitting is on
+validation.csv
+test.csv
+README.md        dataset card: class distribution, splits, label provenance
+audio/*.wav      16 kHz mono 16-bit
+```
+
+The column **must** be named `file_name` — that is how the loader pairs a row
+with its audio, and it loads nothing if the name differs. Splits are stratified
+per class and seeded from the dataset id, so re-exporting reproduces the same
+partition instead of silently reshuffling the test set between experiments.
+
+```python
+from datasets import load_dataset
+ds = load_dataset("audiofolder", data_dir="./")
+```
 
 ## Database
 

@@ -58,6 +58,7 @@ async def ingest_pcm(
         "file_size": len(wav_bytes),
         "source": "esp32",
         "status": "pending",
+        "device_id": device["id"],
         "waveform": audio.waveform_peaks(waveform),
     }).execute().data[0]
 

@@ -61,3 +61,27 @@ Keputusan teknikal yang di-lock sebelum development bermula. Setiap keputusan ad
 - [x] **Semua feature sedia ada kekal** — hanya lapisan UI/UX yang ditukar; tiada endpoint atau logik backend diubah selain menambah `GET /config`
 
 **Had yang diketahui:** guard auth berada di lapisan frontend sahaja. Endpoint API masih terbuka (backend guna service-role key dan memintas RLS seperti sebelum ini) — ini kekalkan aliran ESP32 `/ingest` dan data sedia ada berfungsi. Menguatkuasakan JWT pada setiap endpoint ialah kerja susulan.
+
+### Fasa 4 — Label Review + Dataset Export (29 Julai 2026)
+
+Menutup jurang antara aliran kerja dalam proposal (Slide 14) dan sistem sebenar: kotak **"ML Trainer Review"** dan **"Approve Dataset"** memang dilukis dalam cadangan tetapi tidak pernah dilaksanakan. Sebelum ini eksport menghantar tekaan YAMNet sebagai kebenaran — model yang dilatih atasnya belajar kesilapan YAMNet.
+
+| # | Keputusan | Pilihan | Justifikasi |
+|---|---|---|---|
+| 15 | Semakan manusia | Lajur `review_status` **berasingan** daripada `status` | `status` ialah keadaan *pipeline* (pending → done); `review_status` ialah keputusan *manusia* (unreviewed / approved / rejected). Menggabungkan keduanya akan menyebabkan fail yang gagal diklasifikasi tidak dapat dibezakan daripada fail yang ditolak penyemak. |
+| 16 | Asal-usul label | `label_source`: `human_confirmed` / `human_corrected` / `auto` | Meniru konvensyen dataset terbitan (NVIDIA Nemotron merekod `human` vs `llm_jury`), tetapi memecahkan kes manusia supaya pembaca boleh bezakan label yang disahkan begitu sahaja daripada label yang benar-benar dibetulkan. Melatih atas baris `auto` = melatih atas tekaan. |
+| 17 | Meluluskan tanpa menaip label | Simpan ramalan sebagai `verified_label` | "YAMNet betul" mesti menghasilkan label konkrit dalam pangkalan data, bukan NULL yang perlu diteka semula semasa eksport. |
+| 18 | Nama fail manifest | `metadata.csv` dengan lajur **`file_name`** (dahulu `manifest.csv` / `file`) | HuggingFace `audiofolder` mencari nama tepat itu untuk memadankan baris dengan audio — dengan nama lain ia memuatkan **kosong** tanpa ralat. |
+| 19 | Train/validation/test | Stratified per kelas, di-seed dari `dataset.id` | Stratified supaya kelas jarang tidak jatuh sepenuhnya ke satu split. Di-seed supaya eksport semula menghasilkan partition sama — tanpa itu set ujian berubah senyap antara eksperimen dan nombor ketepatan tidak lagi boleh dibandingkan. Kelas dengan satu contoh pergi ke `train`. |
+| 20 | Apa yang ditapis daripada eksport | Buang `rejected` sentiasa; buang klip tanpa label | Bundle latihan tidak sepatutnya membawa baris yang perlu dibersihkan semula. `README.md` di dalam ZIP menyenaraikan apa yang dikecualikan dan sebabnya. |
+| 21 | `reviewed_by` dihantar oleh klien | Emel dari sesi frontend | Backend masih tiada auth (lihat had di atas), jadi ini rekod *provenance*, bukan kawalan akses. Perlu diganti dengan JWT apabila endpoint dikuatkuasakan. |
+
+- [x] Migration 6: `review_status`, `verified_label`, `reviewed_by`, `reviewed_at`, `review_note`, `device_id` (FK ke `devices`)
+- [x] Migration 7: `files_by_review` ditambah ke RPC `dashboard_stats` — **signature dikekalkan** supaya `create or replace` benar-benar mengganti (menukar argumen akan menambah overload dan mencetuskan PGRST203, seperti berlaku sebelum ini)
+- [x] `PATCH /audio/{id}/review` + `POST /audio/review` (pukal) + penapis `review_status` pada `GET /audio`
+- [x] `backend/app/labels.py` — satu peraturan label dikongsi panel semakan dan eksport, supaya apa yang diluluskan penyemak ialah apa yang dieksport
+- [x] Panel semakan pada halaman Audio Detail: luluskan / betulkan (dengan cadangan kelas) / tolak / buka semula
+- [x] Library: tab **Needs review / Approved / Rejected** dengan kiraan, lajur Review, dan **Approve labels** pukal (setiap fail kekal label sendiri)
+- [x] Datasets: panel eksport dengan bar kesediaan, pilihan (approved sahaja, split, format), dan kiraan langsung "N of M clips will be included"
+- [x] Eksport: `metadata.csv`/`.json` HF-compatible, `train/validation/test.csv`, `README.md` dataset card, lajur teknikal penuh (channels, bit depth, format, saiz, device, metadata tersuai)
+- [x] Diuji: 77 semakan API/eksport + 36 semakan UI (Playwright) lulus; split disahkan 70/15/15 pada 300 klip 4 kelas tak seimbang

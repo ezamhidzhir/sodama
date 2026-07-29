@@ -40,6 +40,11 @@ const P = {
   external: '<path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   clip: '<path d="M9 4h7l4 4v12a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M15 4v5h5"/>',
   leaf: '<path d="M4 20c0-8 5-14 16-15 0 11-5 15-11 15a5 5 0 0 1-5-5z"/><path d="M9 15c1.5-3 4-5.5 7-7"/>',
+  pencil: '<path d="M4 20h4L18 10a2.83 2.83 0 0 0-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
+  closeCircle: '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>',
+  helpCircle: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.5a2.5 2.5 0 1 1 2.9 2.9v1.3"/><path d="M12.5 17v.4"/>',
+  review: '<path d="M9 4H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2"/><rect x="9" y="2.5" width="6" height="3.5" rx="1"/><path d="m9.5 13.5 2 2 3.5-4"/>',
+  sliders: '<path d="M4 6h9M19 6h1M4 12h3M13 12h7M4 18h9M19 18h1"/><circle cx="16" cy="6" r="2.2"/><circle cx="10" cy="12" r="2.2"/><circle cx="16" cy="18" r="2.2"/>',
 };
 
 export const icon = (name, opts) => svg(P[name] ?? P.leaf, opts);

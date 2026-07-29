@@ -1,9 +1,119 @@
 import { api } from '../api.js';
 import { icon } from '../icons.js';
-import { esc, fmtDuration, fmtDate, statusBadge, sourceBadge, spinner, emptyState, toast, pageHeader } from '../ui.js';
+import { esc, fmtDuration, fmtDate, statusBadge, sourceBadge, reviewBadge, spinner, emptyState, toast, pageHeader } from '../ui.js';
 
 let selectedId = null;
 const INPUT = 'field w-full bg-white border border-line rounded-2xl px-4 py-2.5 text-sm transition-shadow';
+
+// Mirrors the server's export rule (see datasets.py): rejected clips and clips
+// that never got a label are never bundled, so the count shown here is the
+// count that lands in the ZIP.
+function exportCounts(items) {
+  const approved = items.filter((f) => f.review_status === 'approved');
+  const rejected = items.filter((f) => f.review_status === 'rejected');
+  const unreviewed = items.filter((f) => f.review_status === 'unreviewed');
+  return {
+    approved: approved.length,
+    rejected: rejected.length,
+    unreviewed: unreviewed.length,
+    unlabelled: items.filter((f) => f.review_status !== 'rejected' && !f.label).length,
+    withApprovedOnly: approved.filter((f) => f.label).length,
+    withAll: items.filter((f) => f.review_status !== 'rejected' && f.label).length,
+  };
+}
+
+function exportPanel(d) {
+  const c = exportCounts(d.items);
+  const total = d.items.length;
+  const seg = (n, cls, title) => n
+    ? `<div class="${cls}" style="width:${(n / total) * 100}%" title="${title}"></div>` : '';
+
+  return `
+    <div class="rounded-xl2 border border-line p-5 mb-5" id="exportPanel">
+      <div class="flex items-center gap-2.5 mb-3">
+        <span class="w-8 h-8 rounded-full bg-page text-brand grid place-items-center shrink-0">
+          ${icon('package', { size: 16 })}</span>
+        <div>
+          <div class="font-semibold leading-tight">Export for training</div>
+          <div class="text-xs text-ink-muted">HuggingFace-compatible bundle: audio, metadata.csv and a dataset card</div>
+        </div>
+      </div>
+
+      <div class="flex h-2 rounded-full overflow-hidden bg-page mb-2">
+        ${seg(c.approved, 'bg-brand', `${c.approved} approved`)}
+        ${seg(c.unreviewed, 'bg-[#EBD9AE]', `${c.unreviewed} unreviewed`)}
+        ${seg(c.rejected, 'bg-accent', `${c.rejected} rejected`)}
+      </div>
+      <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-secondary mb-4">
+        <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-brand"></span>${c.approved} approved</span>
+        <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-[#EBD9AE]"></span>${c.unreviewed} unreviewed</span>
+        <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-accent"></span>${c.rejected} rejected</span>
+        ${c.unlabelled ? `<span class="text-ink-muted">${c.unlabelled} without any label</span>` : ''}
+      </div>
+
+      <div class="space-y-2.5 text-sm">
+        <label class="flex items-start gap-2.5 cursor-pointer">
+          <input type="checkbox" id="optApproved" class="accent-[#4C7438] w-4 h-4 mt-0.5">
+          <span>
+            <span class="font-medium">Approved clips only</span>
+            <span class="block text-xs text-ink-muted">Leaves out anything a human has not confirmed — the safest choice for training</span>
+          </span>
+        </label>
+        <label class="flex items-start gap-2.5 cursor-pointer">
+          <input type="checkbox" id="optSplit" checked class="accent-[#4C7438] w-4 h-4 mt-0.5">
+          <span>
+            <span class="font-medium">Split into train / validation / test</span>
+            <span class="block text-xs text-ink-muted">70 / 15 / 15, balanced per class and reproducible</span>
+          </span>
+        </label>
+        <div class="flex items-center gap-2.5 pt-0.5">
+          <span class="text-xs text-ink-muted">Manifest</span>
+          <select id="optFormat" class="field bg-white border border-line rounded-full px-3.5 py-1.5 text-xs">
+            <option value="both">CSV and JSON</option>
+            <option value="csv">CSV only</option>
+            <option value="json">JSON only</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-line/70">
+        <a id="exportLink" href="/datasets/${d.id}/export" download
+           class="inline-flex items-center gap-2 bg-brand text-white text-sm px-5 py-2.5 rounded-full hover:bg-brand-dark transition-colors">
+          ${icon('download', { size: 16 })} Download ZIP</a>
+        <span class="text-sm text-ink-secondary" id="exportCount"></span>
+      </div>
+    </div>`;
+}
+
+function wireExport(panel, d) {
+  const c = exportCounts(d.items);
+  const link = panel.querySelector('#exportLink');
+  const count = panel.querySelector('#exportCount');
+  const opts = ['optApproved', 'optSplit', 'optFormat'].map((i) => panel.querySelector('#' + i));
+
+  const sync = () => {
+    const [approvedOnly, split, format] = opts;
+    const n = approvedOnly.checked ? c.withApprovedOnly : c.withAll;
+    const params = new URLSearchParams({
+      manifest_format: format.value,
+      only_approved: String(approvedOnly.checked),
+      split: String(split.checked),
+    });
+    link.href = `/datasets/${d.id}/export?${params}`;
+
+    const blocked = n === 0;
+    link.classList.toggle('pointer-events-none', blocked);
+    link.classList.toggle('opacity-40', blocked);
+    count.innerHTML = blocked
+      ? `<span class="text-accent">Nothing to export — ${approvedOnly.checked
+          ? 'approve some clips first, or untick “approved only”'
+          : 'every clip is rejected or unlabelled'}</span>`
+      : `${n} of ${d.items.length} clip${d.items.length === 1 ? '' : 's'} will be included`;
+  };
+
+  opts.forEach((o) => o.addEventListener('change', sync));
+  sync();
+}
 
 export async function renderDatasets(el) {
   el.innerHTML = `
@@ -84,36 +194,33 @@ async function showDetail(el, id) {
 
   panel.innerHTML = `
     <div class="bg-white rounded-xl2 shadow-card p-6">
-      <div class="flex flex-wrap items-start justify-between gap-3 mb-1.5">
+      <div class="flex flex-wrap items-start justify-between gap-3 mb-5">
         <div class="min-w-0">
           <div class="text-lg font-semibold">${esc(d.name)}</div>
           ${d.description ? `<div class="text-sm text-ink-secondary mt-0.5">${esc(d.description)}</div>` : ''}
         </div>
         <div class="flex gap-2.5 shrink-0">
-          <a href="/datasets/${id}/export" download
-             class="inline-flex items-center gap-2 bg-brand text-white text-sm px-5 py-2.5 rounded-full hover:bg-brand-dark transition-colors
-                    ${d.items.length ? '' : 'pointer-events-none opacity-40'}">
-            ${icon('package', { size: 16 })} Export ZIP</a>
           <button id="delDs" class="px-3.5 py-2.5 rounded-full border border-red-200 text-red-600 hover:bg-red-50 transition-colors" title="Delete dataset">
             ${icon('trash', { size: 16 })}</button>
         </div>
       </div>
-      <div class="text-xs text-ink-muted mb-5">
-        The export bundles every WAV plus <span class="font-medium">manifest.csv</span> and
-        <span class="font-medium">manifest.json</span> with auto-labels — ready for model training.
-      </div>
 
-      ${d.items.length ? `
+      ${d.items.length ? exportPanel(d) + `
       <div class="overflow-x-auto">
-        <table class="w-full text-sm min-w-[560px]">
+        <table class="w-full text-sm min-w-[680px]">
           <thead><tr class="text-left text-xs text-ink-muted border-b border-line">
-            <th class="py-2.5 pr-3 font-medium">File</th><th class="py-2.5 pr-3 font-medium">Duration</th>
+            <th class="py-2.5 pr-3 font-medium">File</th><th class="py-2.5 pr-3 font-medium">Label</th>
+            <th class="py-2.5 pr-3 font-medium">Review</th><th class="py-2.5 pr-3 font-medium">Duration</th>
             <th class="py-2.5 pr-3 font-medium">Source</th><th class="py-2.5 pr-3 font-medium">Status</th>
             <th class="py-2.5 font-medium"></th>
           </tr></thead>
           <tbody>${d.items.map((f) => `
             <tr class="border-b border-line/60 last:border-0 hover:bg-page/60 transition-colors">
               <td class="py-3 pr-3"><a class="text-brand hover:underline font-medium" href="#/audio/${f.id}">${esc(f.filename)}</a></td>
+              <td class="py-3 pr-3">${f.label
+                ? `${esc(f.label)}${f.label_source === 'auto' ? ' <span class="text-xs text-ink-muted">(auto)</span>' : ''}`
+                : '<span class="text-ink-muted">—</span>'}</td>
+              <td class="py-3 pr-3">${reviewBadge(f.review_status)}</td>
               <td class="py-3 pr-3 tabular-nums">${fmtDuration(f.duration)}</td>
               <td class="py-3 pr-3">${sourceBadge(f.source)}</td>
               <td class="py-3 pr-3">${statusBadge(f.status)}</td>
@@ -128,6 +235,8 @@ async function showDetail(el, id) {
       : emptyState('folder', 'This dataset is empty',
           'Select files in the <a class="text-brand hover:underline" href="#/library">Library</a> and use “Add to dataset”')}
     </div>`;
+
+  if (d.items.length) wireExport(panel.querySelector('#exportPanel'), d);
 
   panel.querySelectorAll('.rmItem').forEach((b) => b.addEventListener('click', async () => {
     await api(`/datasets/${id}/items/${b.dataset.id}`, { method: 'DELETE' });

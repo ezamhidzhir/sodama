@@ -45,6 +45,34 @@ export const statusBadge = (s) => {
     ${icon(v.ic, { size: 13 })}${esc(s)}</span>`;
 };
 
+// The human verdict, a separate axis from the pipeline `status` above. Both can
+// show in one table row, so each carries its own icon and word — the column
+// header plus the label is what tells them apart, never the colour.
+const REVIEW = {
+  unreviewed: { cls: 'bg-white text-ink-muted border-line', ic: 'helpCircle', text: 'Unreviewed' },
+  approved:   { cls: 'bg-brand-tint text-brand-dark border-brand/25', ic: 'checkCircle', text: 'Approved' },
+  rejected:   { cls: 'bg-accent-tint text-accent-dark border-accent/30', ic: 'closeCircle', text: 'Rejected' },
+};
+
+export const reviewBadge = (s) => {
+  const v = REVIEW[s] ?? REVIEW.unreviewed;
+  return `<span class="inline-flex items-center gap-1.5 pl-2 pr-2.5 py-1 rounded-full text-xs border ${v.cls}">
+    ${icon(v.ic, { size: 13 })}${v.text}</span>`;
+};
+
+// Where a label came from. `auto` is deliberately the loudest: an unverified
+// YAMNet guess is the one thing a trainer must not mistake for ground truth.
+const LABEL_SOURCE = {
+  human_confirmed: { cls: 'bg-brand-tint text-brand-dark border-brand/25', text: 'Confirmed by reviewer' },
+  human_corrected: { cls: 'bg-brand-tint text-brand-dark border-brand/25', text: 'Corrected by reviewer' },
+  auto:            { cls: 'bg-[#FBF3E0] text-[#8A6208] border-[#EBD9AE]', text: 'Unverified auto-label' },
+};
+
+export const labelSourceBadge = (s) => {
+  const v = LABEL_SOURCE[s] ?? LABEL_SOURCE.auto;
+  return `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${v.cls}">${v.text}</span>`;
+};
+
 export const sourceBadge = (s) => s === 'esp32'
   ? `<span class="inline-flex items-center gap-1.5 pl-2 pr-2.5 py-1 rounded-full text-xs bg-[#E4EFF6] text-[#22587A] border border-[#C2DCEA]">${icon('device', { size: 13 })}ESP32</span>`
   : `<span class="inline-flex items-center gap-1.5 pl-2 pr-2.5 py-1 rounded-full text-xs bg-brand-tint text-brand-dark border border-brand/25">${icon('upload', { size: 13 })}Upload</span>`;

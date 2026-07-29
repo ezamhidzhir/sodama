@@ -1,17 +1,36 @@
 import { api, qs } from '../api.js';
+import { getUser } from '../auth.js';
 import { icon } from '../icons.js';
-import { esc, fmtDuration, fmtDate, statusBadge, sourceBadge, spinner, emptyState, toast, playAudio, currentlyPlaying, pageHeader, linkPrimary } from '../ui.js';
+import { esc, fmtDuration, fmtDate, statusBadge, sourceBadge, reviewBadge, spinner, emptyState, toast, playAudio, currentlyPlaying, pageHeader, linkPrimary } from '../ui.js';
 
-const state = { page: 1, per_page: 15, filters: {} };
+// `review` is kept out of `filters` because the filter form is rebuilt wholesale
+// on submit, which would wipe a tab chosen above it.
+const state = { page: 1, per_page: 15, filters: {}, review: '' };
 const INPUT = 'field w-full bg-white border border-line rounded-full px-4 py-2.5 text-sm transition-shadow';
+
+const TABS = [
+  { key: '', label: 'All files' },
+  { key: 'unreviewed', label: 'Needs review' },
+  { key: 'approved', label: 'Approved' },
+  { key: 'rejected', label: 'Rejected' },
+];
 
 export async function renderLibrary(el) {
   el.innerHTML = `
-    ${pageHeader('Library', 'Search and filter your audio collection.',
+    ${pageHeader('Library', 'Search your collection, then confirm or correct each label.',
       linkPrimary('Upload audio', 'upload', '#/upload'))}
 
+    <div class="flex flex-wrap gap-2 mb-4" id="reviewTabs">
+      ${TABS.map((t) => `
+        <button data-review="${t.key}"
+                class="tab inline-flex items-center gap-2 px-4 py-2 rounded-full border text-sm transition-colors
+                       ${t.key === state.review ? 'bg-brand text-white border-brand' : 'bg-white border-line text-ink-secondary hover:border-brand hover:text-brand'}">
+          ${esc(t.label)}<span class="tabCount text-xs opacity-70 tabular-nums" data-review="${t.key}"></span>
+        </button>`).join('')}
+    </div>
+
     <form id="filters" class="bg-white rounded-xl2 shadow-card p-5 mb-4">
-      <div class="grid grid-cols-2 lg:grid-cols-6 gap-3">
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div class="col-span-2">
           <label class="block text-xs text-ink-muted mb-1.5">Class</label>
           <input name="class_name" list="classList" placeholder="e.g. Speech" class="${INPUT}">
@@ -50,8 +69,13 @@ export async function renderLibrary(el) {
 
     <div id="bulkbar" class="hidden flex-wrap items-center gap-3 bg-brand-tint border border-brand/25 rounded-2xl px-5 py-3 mb-4 text-sm">
       <span id="selCount" class="font-medium"></span>
+      <button id="approveSel" class="inline-flex items-center gap-1.5 bg-brand text-white px-4 py-2 rounded-full hover:bg-brand-dark transition-colors"
+              title="Accept each file's own predicted label">
+        ${icon('check', { size: 15 })} Approve labels
+      </button>
+      <span class="w-px h-6 bg-brand/25"></span>
       <select id="dsSelect" class="field bg-white border border-line rounded-full px-4 py-2 text-sm"></select>
-      <button id="addToDs" class="inline-flex items-center gap-1.5 bg-brand text-white px-4 py-2 rounded-full hover:bg-brand-dark transition-colors">
+      <button id="addToDs" class="inline-flex items-center gap-1.5 bg-white border border-line px-4 py-2 rounded-full hover:border-brand hover:text-brand transition-colors">
         ${icon('plus', { size: 15 })} Add to dataset
       </button>
       <button id="deleteSel" class="inline-flex items-center gap-1.5 bg-white border border-red-200 text-red-600 px-4 py-2 rounded-full hover:bg-red-50 transition-colors ml-auto">
@@ -75,12 +99,37 @@ export async function renderLibrary(el) {
   // restore previous filters when navigating back from detail
   Object.entries(state.filters).forEach(([k, v]) => { if (form.elements[k]) form.elements[k].value = v; });
 
+  el.querySelectorAll('#reviewTabs .tab').forEach((b) => b.addEventListener('click', () => {
+    state.review = b.dataset.review;
+    state.page = 1;
+    el.querySelectorAll('#reviewTabs .tab').forEach((o) => {
+      const on = o.dataset.review === state.review;
+      o.className = o.className
+        .replace(/bg-brand text-white border-brand|bg-white border-line text-ink-secondary hover:border-brand hover:text-brand/,
+                 on ? 'bg-brand text-white border-brand' : 'bg-white border-line text-ink-secondary hover:border-brand hover:text-brand');
+    });
+    loadResults(el);
+  }));
+
   api('/stats').then((s) => {
     el.querySelector('#classList').innerHTML =
       s.class_distribution.map((c) => `<option value="${esc(c.class_name)}">`).join('');
   }).catch(() => {});
 
+  refreshCounts(el);
   loadResults(el);
+}
+
+// Tab counts come from the dashboard aggregate — one round-trip for all four.
+function refreshCounts(el) {
+  api('/stats').then((s) => {
+    const by = s.files_by_review ?? {};
+    el.querySelectorAll('.tabCount').forEach((n) => {
+      const k = n.dataset.review;
+      const count = k ? (by[k] ?? 0) : s.total_files;
+      n.textContent = count ? String(count) : '';
+    });
+  }).catch(() => {});
 }
 
 async function loadResults(el) {
@@ -92,10 +141,15 @@ async function loadResults(el) {
   bar.classList.add('hidden');
   bar.classList.remove('flex');
 
-  const data = await api('/audio' + qs({ ...state.filters, page: state.page, per_page: state.per_page }));
+  const data = await api('/audio' + qs({
+    ...state.filters, review_status: state.review, page: state.page, per_page: state.per_page }));
   if (!data.items.length) {
-    results.innerHTML = `<div class="bg-white rounded-xl2 shadow-card">${emptyState('search', 'No audio found',
-      Object.values(state.filters).some(Boolean) ? 'Try loosening the filters' : 'Upload some audio to get started')}</div>`;
+    const hint = state.review === 'unreviewed' ? 'Every file has been reviewed — nothing left in the queue'
+      : state.review ? 'No files in this review state yet'
+      : Object.values(state.filters).some(Boolean) ? 'Try loosening the filters'
+      : 'Upload some audio to get started';
+    results.innerHTML = `<div class="bg-white rounded-xl2 shadow-card">${emptyState(
+      state.review === 'unreviewed' ? 'checkCircle' : 'search', 'No audio found', hint)}</div>`;
     return;
   }
 
@@ -108,7 +162,8 @@ async function loadResults(el) {
             <th class="p-4 w-8"><input type="checkbox" id="selAll" class="accent-[#4C7438] w-4 h-4"></th>
             <th class="p-4 w-10"></th>
             <th class="p-4 font-medium">File</th>
-            <th class="p-4 font-medium">Top class</th>
+            <th class="p-4 font-medium">Label</th>
+            <th class="p-4 font-medium">Review</th>
             <th class="p-4 font-medium">Duration</th>
             <th class="p-4 font-medium">Source</th>
             <th class="p-4 font-medium">Status</th>
@@ -123,9 +178,12 @@ async function loadResults(el) {
                         data-id="${f.id}" title="Play or pause" aria-label="Play ${esc(f.filename)}">${icon('play', { size: 14, fill: true })}</button>
               </td>
               <td class="p-4"><a class="text-brand hover:underline font-medium" href="#/audio/${f.id}">${esc(f.filename)}</a></td>
-              <td class="p-4">${f.top_class
-                ? `${esc(f.top_class.class_name)} <span class="text-xs text-ink-muted tabular-nums">${(f.top_class.confidence * 100).toFixed(0)}%</span>`
-                : '<span class="text-ink-muted">—</span>'}</td>
+              <td class="p-4">${f.verified_label
+                ? esc(f.verified_label)
+                : f.top_class
+                  ? `${esc(f.top_class.class_name)} <span class="text-xs text-ink-muted tabular-nums">${(f.top_class.confidence * 100).toFixed(0)}%</span>`
+                  : '<span class="text-ink-muted">—</span>'}</td>
+              <td class="p-4">${reviewBadge(f.review_status)}</td>
               <td class="p-4 tabular-nums">${fmtDuration(f.duration)}</td>
               <td class="p-4">${sourceBadge(f.source)}</td>
               <td class="p-4">${statusBadge(f.status)}</td>
@@ -178,6 +236,7 @@ async function loadResults(el) {
     try {
       await api(`/audio/${id}`, { method: 'DELETE' });
       toast('Audio file deleted', 'success');
+      refreshCounts(el);
       loadResults(el);
     } catch (e) { toast(e.message, 'error'); btn.disabled = false; }
   }));
@@ -195,6 +254,26 @@ async function loadResults(el) {
     results.querySelectorAll('.rowSel').forEach((c) => { c.checked = e.target.checked; });
     refreshBulk();
   });
+
+  // Bulk approve accepts each file's *own* predicted label, so a mixed selection
+  // still ends up correctly labelled rather than sharing one blanket class.
+  el.querySelector('#approveSel').onclick = async () => {
+    const ids = [...results.querySelectorAll('.rowSel:checked')].map((c) => c.value);
+    if (!confirm(`Approve ${ids.length} file${ids.length === 1 ? '' : 's'}?\n\n`
+                 + "Each keeps its own predicted label. Check any you are unsure of first — "
+                 + 'approving marks them as human-verified in every export.')) return;
+    try {
+      const r = await api('/audio/review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audio_file_ids: ids, review_status: 'approved', reviewed_by: getUser()?.email ?? null }),
+      });
+      toast(`Approved ${r.updated} file${r.updated === 1 ? '' : 's'}`, 'success');
+      refreshCounts(el);
+      loadResults(el);
+    } catch (e) { toast(e.message, 'error'); }
+  };
 
   const dsSelect = el.querySelector('#dsSelect');
   api('/datasets').then((ds) => {
@@ -230,6 +309,7 @@ async function loadResults(el) {
     else toast(`Deleted ${ids.length} file${ids.length === 1 ? '' : 's'}`, 'success');
 
     state.page = 1;  // the current page may no longer exist
+    refreshCounts(el);
     loadResults(el);
   };
 }
