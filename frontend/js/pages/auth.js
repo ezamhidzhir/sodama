@@ -28,8 +28,11 @@ export function renderAuth(el, mode = 'login') {
           <div class="absolute -right-4 bottom-10 w-40 h-40 rounded-full" style="background:rgba(122,82,57,.28)"></div>
 
           <div class="flex items-center gap-2.5 relative">
-            <span class="w-9 h-9 rounded-full bg-white/15 grid place-items-center">${icon('waveform', { size: 18 })}</span>
-            <span class="font-semibold tracking-tight">Sound Data Management</span>
+            <span class="w-9 h-9 rounded-full bg-white/15 grid place-items-center shrink-0">${icon('waveform', { size: 18 })}</span>
+            <div>
+              <div class="font-bold leading-tight tracking-wide">SODAMA</div>
+              <div class="text-xs text-white/70 -mt-0.5">Sound Data Management</div>
+            </div>
           </div>
 
           <div class="relative max-w-md">
@@ -61,8 +64,11 @@ export function renderAuth(el, mode = 'login') {
         <div class="bg-white rounded-xl3 shadow-card flex items-center justify-center p-6 sm:p-10">
           <div class="w-full max-w-sm fade-in">
             <div class="lg:hidden flex items-center gap-2.5 mb-8">
-              <span class="w-9 h-9 rounded-full bg-brand text-white grid place-items-center">${icon('waveform', { size: 18 })}</span>
-              <span class="font-semibold">Sound Data Management</span>
+              <span class="w-9 h-9 rounded-full bg-brand text-white grid place-items-center shrink-0">${icon('waveform', { size: 18 })}</span>
+              <div>
+                <div class="font-bold leading-tight tracking-wide">SODAMA</div>
+                <div class="text-xs text-ink-muted -mt-0.5">Sound Data Management</div>
+              </div>
             </div>
 
             <h2 class="text-2xl font-bold tracking-tight">${isLogin ? 'Welcome back' : 'Create your account'}</h2>

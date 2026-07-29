@@ -15,6 +15,20 @@ from .routers import audio_files, datasets, devices, ingest, stats, upload
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
+
+class NoCacheStaticFiles(StaticFiles):
+    """Serve the dashboard with revalidation forced.
+
+    Without an explicit Cache-Control, browsers fall back to heuristic caching
+    and keep running stale JS modules after an edit — which silently skipped the
+    sign-in guard once. `no-cache` still allows 304s via ETag, so it stays cheap.
+    """
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(
@@ -48,4 +62,4 @@ def health():
 
 
 # dashboard SPA — mounted last so API routes take precedence
-app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+app.mount("/", NoCacheStaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
