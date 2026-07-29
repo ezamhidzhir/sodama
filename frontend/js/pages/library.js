@@ -48,11 +48,14 @@ export async function renderLibrary(el) {
       </div>
     </form>
 
-    <div id="bulkbar" class="hidden items-center gap-3 bg-brand-tint border border-brand/25 rounded-full px-5 py-3 mb-4 text-sm">
+    <div id="bulkbar" class="hidden flex-wrap items-center gap-3 bg-brand-tint border border-brand/25 rounded-2xl px-5 py-3 mb-4 text-sm">
       <span id="selCount" class="font-medium"></span>
       <select id="dsSelect" class="field bg-white border border-line rounded-full px-4 py-2 text-sm"></select>
       <button id="addToDs" class="inline-flex items-center gap-1.5 bg-brand text-white px-4 py-2 rounded-full hover:bg-brand-dark transition-colors">
         ${icon('plus', { size: 15 })} Add to dataset
+      </button>
+      <button id="deleteSel" class="inline-flex items-center gap-1.5 bg-white border border-red-200 text-red-600 px-4 py-2 rounded-full hover:bg-red-50 transition-colors ml-auto">
+        ${icon('trash', { size: 15 })} Delete selected
       </button>
     </div>
 
@@ -84,6 +87,11 @@ async function loadResults(el) {
   const results = el.querySelector('#results');
   results.innerHTML = spinner();
 
+  // the rows (and their checkboxes) are about to be replaced
+  const bar = el.querySelector('#bulkbar');
+  bar.classList.add('hidden');
+  bar.classList.remove('flex');
+
   const data = await api('/audio' + qs({ ...state.filters, page: state.page, per_page: state.per_page }));
   if (!data.items.length) {
     results.innerHTML = `<div class="bg-white rounded-xl2 shadow-card">${emptyState('search', 'No audio found',
@@ -105,6 +113,7 @@ async function loadResults(el) {
             <th class="p-4 font-medium">Source</th>
             <th class="p-4 font-medium">Status</th>
             <th class="p-4 font-medium">Uploaded</th>
+            <th class="p-4 w-12"></th>
           </tr></thead>
           <tbody>${data.items.map((f) => `
             <tr class="border-b border-line/60 last:border-0 hover:bg-page/60 transition-colors">
@@ -121,6 +130,12 @@ async function loadResults(el) {
               <td class="p-4">${sourceBadge(f.source)}</td>
               <td class="p-4">${statusBadge(f.status)}</td>
               <td class="p-4 text-ink-secondary whitespace-nowrap">${fmtDate(f.uploaded_at)}</td>
+              <td class="p-4">
+                <button class="delBtn w-8 h-8 rounded-full text-ink-muted hover:bg-red-50 hover:text-red-600 transition-colors grid place-items-center"
+                        data-id="${f.id}" data-name="${esc(f.filename)}" title="Delete this file" aria-label="Delete ${esc(f.filename)}">
+                  ${icon('trash', { size: 15 })}
+                </button>
+              </td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -155,7 +170,19 @@ async function loadResults(el) {
     playAudio(id, urlCache[id], repaintPlay);
   }));
 
-  // bulk add-to-dataset
+  // delete a single row
+  results.querySelectorAll('.delBtn').forEach((btn) => btn.addEventListener('click', async () => {
+    const { id, name } = btn.dataset;
+    if (!confirm(`Delete "${name}" permanently?\n\nIts classifications and dataset links are removed too. This cannot be undone.`)) return;
+    btn.disabled = true;
+    try {
+      await api(`/audio/${id}`, { method: 'DELETE' });
+      toast('Audio file deleted', 'success');
+      loadResults(el);
+    } catch (e) { toast(e.message, 'error'); btn.disabled = false; }
+  }));
+
+  // bulk add-to-dataset / delete
   const bulkbar = el.querySelector('#bulkbar');
   const refreshBulk = () => {
     const sel = [...results.querySelectorAll('.rowSel:checked')];
@@ -188,5 +215,21 @@ async function loadResults(el) {
       results.querySelectorAll('.rowSel:checked').forEach((c) => { c.checked = false; });
       refreshBulk();
     } catch (e) { toast(e.message, 'error'); }
+  };
+
+  el.querySelector('#deleteSel').onclick = async () => {
+    const ids = [...results.querySelectorAll('.rowSel:checked')].map((c) => c.value);
+    if (!confirm(`Delete ${ids.length} file${ids.length === 1 ? '' : 's'} permanently?\n\n`
+                 + 'Their classifications and dataset links are removed too. This cannot be undone.')) return;
+
+    const outcomes = await Promise.allSettled(
+      ids.map((id) => api(`/audio/${id}`, { method: 'DELETE' })));
+    const failed = outcomes.filter((r) => r.status === 'rejected').length;
+
+    if (failed) toast(`Deleted ${ids.length - failed} of ${ids.length}; ${failed} failed`, 'error');
+    else toast(`Deleted ${ids.length} file${ids.length === 1 ? '' : 's'}`, 'success');
+
+    state.page = 1;  // the current page may no longer exist
+    loadResults(el);
   };
 }
