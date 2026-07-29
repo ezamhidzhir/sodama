@@ -1,4 +1,23 @@
-# Railway/Nixpacks looks for a requirements.txt at the repo root.
-# The whole repo is deployed as one service: FastAPI serves the API and the
-# dashboard in frontend/, so the build cannot be scoped to backend/ alone.
--r backend/requirements.txt
+# Canonical dependency list for the whole project.
+#
+# It lives at the repo root because that is where Railway/Nixpacks looks. The
+# build copies this file alone, runs pip install, and only then copies the rest
+# of the source — so this file cannot use `-r backend/requirements.txt`:
+# backend/ does not exist yet at that layer.
+
+fastapi
+uvicorn[standard]
+python-multipart
+
+# CPU build: on Linux the plain `tensorflow` wheel drags in ~600 MB of CUDA
+# libraries that a server with no GPU never uses. Same import name either way.
+tensorflow-cpu
+tensorflow-hub
+setuptools<81   # tensorflow-hub imports pkg_resources, removed in setuptools 81+
+
+librosa
+soundfile
+numpy
+
+supabase
+python-dotenv

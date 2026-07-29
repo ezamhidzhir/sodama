@@ -23,10 +23,20 @@ committing.)*
 
 | File | Purpose |
 |---|---|
-| `requirements.txt` (root) | Nixpacks looks for it at the repo root; it just includes `backend/requirements.txt` |
+| `requirements.txt` (root) | **The canonical dependency list.** Nixpacks looks here, and it must be self-contained — see the note below |
 | `Procfile` | Start command — binds `$PORT`, uses `--app-dir backend`, **one worker** |
-| `.python-version` | Pins Python 3.12; TensorFlow does not support 3.13+ |
-| `backend/requirements.txt` | Uses `tensorflow-cpu` — the plain wheel adds ~600 MB of unused CUDA libraries on Linux |
+| `.python-version` | Pins Python 3.12; `tensorflow-cpu` publishes wheels for cp310–cp313 only |
+| `backend/requirements.txt` | One line, `-r ../requirements.txt`, so local dev commands still work |
+
+**The root list cannot delegate with `-r backend/requirements.txt`.** Nixpacks
+copies `requirements.txt` on its own, runs `pip install`, and only then copies
+the rest of the source — a Docker layer-caching pattern. At install time
+`backend/` does not exist yet, so the build fails with:
+
+```
+ERROR: Could not open requirements file: [Errno 2] No such file or directory:
+'/app/backend/requirements.txt'
+```
 
 **One worker is deliberate.** Each uvicorn worker loads its own copy of YAMNet,
 so `--workers 2` doubles the memory and is the usual cause of an OOM kill.
