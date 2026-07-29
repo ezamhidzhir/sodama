@@ -1,7 +1,7 @@
 import secrets
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..db import get_client
 
@@ -9,21 +9,32 @@ router = APIRouter(tags=["devices"])
 
 
 class DeviceCreate(BaseModel):
-    device_name: str
+    device_name: str = Field(min_length=1, max_length=64)
+
+
+class DeviceUpdate(BaseModel):
+    device_name: str | None = Field(default=None, min_length=1, max_length=64)
+    regenerate_key: bool = False
+
+
+def _get_device_or_404(client, device_id: str) -> dict:
+    rows = client.table("devices").select("*").eq("id", device_id).execute().data
+    if not rows:
+        raise HTTPException(404, "device not found")
+    return rows[0]
 
 
 @router.post("/devices", status_code=201,
              summary="Register an ESP32 device (returns its API key once)")
 def create_device(body: DeviceCreate):
     client = get_client()
-    existing = client.table("devices").select("id") \
-        .eq("device_name", body.device_name).execute().data
+    name = body.device_name.strip()
+    existing = client.table("devices").select("id").eq("device_name", name).execute().data
     if existing:
         raise HTTPException(409, "device_name already registered")
 
-    api_key = secrets.token_hex(24)
     row = client.table("devices").insert({
-        "device_name": body.device_name, "api_key": api_key,
+        "device_name": name, "api_key": secrets.token_hex(24),
     }).execute().data[0]
     # only time the full key is returned — flash it into the ESP32 firmware
     return row
@@ -36,3 +47,40 @@ def list_devices():
     for r in rows:
         r["api_key"] = "…" + r["api_key"][-4:]
     return rows
+
+
+@router.patch("/devices/{device_id}", summary="Rename a device or rotate its API key")
+def update_device(device_id: str, body: DeviceUpdate):
+    client = get_client()
+    device = _get_device_or_404(client, device_id)
+
+    patch: dict = {}
+    if body.device_name is not None:
+        name = body.device_name.strip()
+        if name != device["device_name"]:
+            clash = (client.table("devices").select("id")
+                     .eq("device_name", name).execute().data)
+            if clash:
+                raise HTTPException(409, "device_name already registered")
+            patch["device_name"] = name
+    if body.regenerate_key:
+        patch["api_key"] = secrets.token_hex(24)
+
+    if not patch:
+        raise HTTPException(400, "nothing to update")
+
+    row = client.table("devices").update(patch).eq("id", device_id).execute().data[0]
+    if not body.regenerate_key:
+        row["api_key"] = "…" + row["api_key"][-4:]  # only reveal a freshly issued key
+    return row
+
+
+@router.delete("/devices/{device_id}", status_code=204,
+               summary="Delete a device (its recordings are kept)")
+def delete_device(device_id: str):
+    """Removes the device registration and invalidates its API key. Audio the
+    device already uploaded stays in the library — those rows are not linked to
+    `devices`, so nothing cascades."""
+    client = get_client()
+    _get_device_or_404(client, device_id)
+    client.table("devices").delete().eq("id", device_id).execute()

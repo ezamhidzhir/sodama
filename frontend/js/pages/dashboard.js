@@ -37,7 +37,10 @@ export async function renderDashboard(el) {
     <div class="grid lg:grid-cols-3 gap-4 mb-5">
       <div class="lg:col-span-2 bg-white rounded-xl2 shadow-card p-6">
         <div class="font-semibold">Top classes</div>
-        <div class="text-xs text-ink-muted mt-1 mb-4">Number of files in which each YAMNet class appears</div>
+        <div class="text-xs text-ink-muted mt-1 mb-4">
+          Files containing each YAMNet class, counting only predictions above
+          ${Math.round((stats.min_confidence ?? 0.3) * 100)}% confidence
+        </div>
         <div class="relative h-64">
           ${stats.class_distribution.length ? '<canvas id="classChart"></canvas>'
             : emptyState('waveform', 'No classifications yet', 'Upload audio to see the class distribution')}
@@ -101,7 +104,16 @@ export async function renderDashboard(el) {
           legend: { display: false },  // single series — the title names it
           tooltip: {
             backgroundColor: '#1E2A17', padding: 10, cornerRadius: 8, displayColors: false,
-            callbacks: { label: (c) => `${c.parsed.x} file${c.parsed.x === 1 ? '' : 's'}` },
+            callbacks: {
+              label: (c) => {
+                const row = stats.class_distribution[c.dataIndex];
+                return [
+                  `${row.file_count} file${row.file_count === 1 ? '' : 's'}`,
+                  `mean confidence ${(row.avg_confidence * 100).toFixed(0)}%`,
+                  `peak ${(row.max_confidence * 100).toFixed(0)}%`,
+                ];
+              },
+            },
           },
         },
         scales: {

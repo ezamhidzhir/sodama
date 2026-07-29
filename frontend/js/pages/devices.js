@@ -35,30 +35,37 @@ export async function renderDevices(el) {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       e.target.reset();
-      el.querySelector('#newKey').innerHTML = `
-        <div class="bg-accent-tint border border-accent/30 rounded-xl2 p-5 mb-4 text-sm fade-in">
-          <div class="flex items-center gap-2 font-semibold text-accent-dark mb-2">
-            ${icon('lock', { size: 16 })} API key for “${esc(dev.device_name)}” — shown only once
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <code class="bg-white border border-accent/20 rounded-full px-4 py-2 break-all select-all text-xs">${dev.api_key}</code>
-            <button id="copyKey" class="inline-flex items-center gap-1.5 shrink-0 text-accent-dark border border-accent/30 rounded-full px-4 py-2 hover:bg-white transition-colors">
-              ${icon('copy', { size: 14 })} Copy</button>
-          </div>
-          <div class="text-ink-secondary mt-2.5">
-            Flash this into the ESP32 firmware as the <code>X-API-Key</code> header value.
-          </div>
-        </div>`;
-      el.querySelector('#copyKey').addEventListener('click', () => {
-        navigator.clipboard.writeText(dev.api_key);
-        toast('API key copied to clipboard', 'success');
-      });
+      showKey(el, dev.device_name, dev.api_key);
       loadDevices(el);
     } catch (err) { toast(err.message, 'error'); }
   });
 
   loadDevices(el);
   loadRecordings(el);
+}
+
+// The full API key is only ever available right after it is issued.
+function showKey(el, deviceName, apiKey, rotated = false) {
+  el.querySelector('#newKey').innerHTML = `
+    <div class="bg-accent-tint border border-accent/30 rounded-xl2 p-5 mb-4 text-sm fade-in">
+      <div class="flex items-center gap-2 font-semibold text-accent-dark mb-2">
+        ${icon('lock', { size: 16 })}
+        ${rotated ? 'New API key for' : 'API key for'} “${esc(deviceName)}” — shown only once
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <code class="bg-white border border-accent/20 rounded-full px-4 py-2 break-all select-all text-xs">${esc(apiKey)}</code>
+        <button id="copyKey" class="inline-flex items-center gap-1.5 shrink-0 text-accent-dark border border-accent/30 rounded-full px-4 py-2 hover:bg-white transition-colors">
+          ${icon('copy', { size: 14 })} Copy</button>
+      </div>
+      <div class="text-ink-secondary mt-2.5">
+        Flash this into the ESP32 firmware as the <code>X-API-Key</code> header value.
+        ${rotated ? 'The previous key stops working immediately.' : ''}
+      </div>
+    </div>`;
+  el.querySelector('#copyKey').addEventListener('click', () => {
+    navigator.clipboard.writeText(apiKey);
+    toast('API key copied to clipboard', 'success');
+  });
 }
 
 async function loadDevices(el) {
@@ -87,8 +94,54 @@ async function loadDevices(el) {
           <div class="flex justify-between gap-2"><dt class="text-ink-muted">API key</dt><dd><code>${esc(d.api_key)}</code></dd></div>
           <div class="flex justify-between gap-2"><dt class="text-ink-muted">Registered</dt><dd class="text-right">${fmtDate(d.created_at)}</dd></div>
         </dl>
+
+        <div class="flex items-center gap-2 mt-4 pt-3 border-t border-line">
+          <button class="renameBtn inline-flex items-center gap-1.5 text-xs text-ink-secondary border border-line rounded-full px-3 py-1.5 hover:border-brand hover:text-brand transition-colors"
+                  data-id="${d.id}" data-name="${esc(d.device_name)}">${icon('clip', { size: 13 })} Rename</button>
+          <button class="rotateBtn inline-flex items-center gap-1.5 text-xs text-ink-secondary border border-line rounded-full px-3 py-1.5 hover:border-accent hover:text-accent transition-colors"
+                  data-id="${d.id}" data-name="${esc(d.device_name)}" title="Issue a new API key">${icon('lock', { size: 13 })} New key</button>
+          <button class="delDevBtn inline-flex items-center gap-1.5 text-xs text-ink-muted rounded-full px-3 py-1.5 ml-auto hover:bg-red-50 hover:text-red-600 transition-colors"
+                  data-id="${d.id}" data-name="${esc(d.device_name)}" title="Delete device">${icon('trash', { size: 13 })} Delete</button>
+        </div>
       </div>`;
   }).join('');
+
+  list.querySelectorAll('.renameBtn').forEach((b) => b.addEventListener('click', async () => {
+    const { id, name } = b.dataset;
+    const next = prompt(`Rename device “${name}” to:`, name);
+    if (next === null || next.trim() === '' || next.trim() === name) return;
+    try {
+      await api(`/devices/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_name: next.trim() }),
+      });
+      toast('Device renamed', 'success');
+      loadDevices(el);
+    } catch (e) { toast(e.message, 'error'); }
+  }));
+
+  list.querySelectorAll('.rotateBtn').forEach((b) => b.addEventListener('click', async () => {
+    const { id, name } = b.dataset;
+    if (!confirm(`Issue a new API key for “${name}”?\n\nThe current key stops working immediately, so the device must be reflashed.`)) return;
+    try {
+      const dev = await api(`/devices/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ regenerate_key: true }),
+      });
+      showKey(el, dev.device_name, dev.api_key, true);
+      loadDevices(el);
+    } catch (e) { toast(e.message, 'error'); }
+  }));
+
+  list.querySelectorAll('.delDevBtn').forEach((b) => b.addEventListener('click', async () => {
+    const { id, name } = b.dataset;
+    if (!confirm(`Delete device “${name}”?\n\nIts API key stops working. Recordings it already uploaded stay in the Library.`)) return;
+    try {
+      await api(`/devices/${id}`, { method: 'DELETE' });
+      toast('Device deleted', 'success');
+      loadDevices(el);
+    } catch (e) { toast(e.message, 'error'); }
+  }));
 }
 
 async function loadRecordings(el) {
