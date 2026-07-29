@@ -1,61 +1,75 @@
 import { api } from '../api.js';
-import { esc, toast, statusBadge } from '../ui.js';
+import { icon } from '../icons.js';
+import { esc, toast, statusBadge, pageHeader } from '../ui.js';
 
 const ACCEPT = '.wav,.mp3,.flac,.ogg';
 const POLL_MS = 2500;
 
 export async function renderUpload(el) {
   el.innerHTML = `
-    <h1 class="text-2xl font-bold mb-2">Upload audio</h1>
-    <p class="text-sm text-ink-muted mb-6">WAV, MP3, FLAC or OGG — files are standardized to 16kHz mono and classified automatically with YAMNet.</p>
+    ${pageHeader('Upload audio',
+      'WAV, MP3, FLAC or OGG — files are standardized to 16 kHz mono and classified automatically with YAMNet.')}
 
     <div id="dropzone"
-         class="bg-white border-2 border-dashed border-grid rounded-2xl p-12 text-center cursor-pointer transition-colors hover:border-brand hover:bg-brand-light/20">
-      <div class="text-5xl mb-3">🎙️</div>
-      <div class="font-medium">Drag &amp; drop audio files here</div>
-      <div class="text-sm text-ink-muted mt-1">or <span class="text-brand font-medium">click to browse</span> (max 50 MB per file)</div>
+         class="bg-white border-2 border-dashed border-line rounded-xl3 p-14 text-center cursor-pointer
+                transition-colors hover:border-brand hover:bg-brand-tint/30">
+      <div class="w-16 h-16 rounded-full bg-page text-brand grid place-items-center mx-auto mb-4">
+        ${icon('upload', { size: 26 })}
+      </div>
+      <div class="font-medium text-lg">Drag and drop audio files here</div>
+      <div class="text-sm text-ink-muted mt-1.5">
+        or <span class="text-brand font-medium">browse from your computer</span> · up to 50 MB per file
+      </div>
       <input id="fileInput" type="file" accept="${ACCEPT}" multiple class="hidden">
     </div>
 
-    <div id="uploads" class="mt-6 space-y-3"></div>`;
+    <div id="uploads" class="mt-5 space-y-3"></div>`;
 
   const dropzone = el.querySelector('#dropzone');
   const input = el.querySelector('#fileInput');
   const list = el.querySelector('#uploads');
+  const HOVER = ['border-brand', 'bg-brand-tint/30'];
 
   dropzone.addEventListener('click', () => input.click());
   input.addEventListener('change', () => { handleFiles(input.files); input.value = ''; });
-  dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('border-brand', 'bg-brand-light/20'); });
-  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('border-brand', 'bg-brand-light/20'));
+  dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add(...HOVER); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove(...HOVER));
   dropzone.addEventListener('drop', (e) => {
     e.preventDefault();
-    dropzone.classList.remove('border-brand', 'bg-brand-light/20');
+    dropzone.classList.remove(...HOVER);
     handleFiles(e.dataTransfer.files);
   });
 
   function handleFiles(files) {
     [...files].forEach((file) => {
       const ext = '.' + file.name.split('.').pop().toLowerCase();
-      if (!ACCEPT.includes(ext)) { toast(`${file.name}: unsupported type`, 'error'); return; }
+      if (!ACCEPT.includes(ext)) { toast(`${file.name}: unsupported file type`, 'error'); return; }
       uploadOne(file);
     });
   }
 
   function uploadOne(file) {
     const card = document.createElement('div');
-    card.className = 'bg-white rounded-xl border border-grid p-4 fade-in';
+    card.className = 'bg-white rounded-xl2 shadow-card p-5 fade-in';
     card.innerHTML = `
       <div class="flex items-center justify-between gap-3">
-        <div class="min-w-0">
-          <div class="font-medium truncate">${esc(file.name)}</div>
-          <div class="text-xs text-ink-muted">${(file.size / 1024 / 1024).toFixed(2)} MB</div>
+        <div class="flex items-center gap-3 min-w-0">
+          <span class="w-9 h-9 rounded-full bg-page text-brand grid place-items-center shrink-0">
+            ${icon('clip', { size: 16 })}
+          </span>
+          <div class="min-w-0">
+            <div class="font-medium truncate">${esc(file.name)}</div>
+            <div class="text-xs text-ink-muted">${(file.size / 1024 / 1024).toFixed(2)} MB</div>
+          </div>
         </div>
-        <div class="text-sm shrink-0" data-role="state">Uploading… <span data-role="pct">0%</span></div>
+        <div class="text-sm shrink-0 text-ink-secondary" data-role="state">
+          Uploading <span data-role="pct" class="tabular-nums">0%</span>
+        </div>
       </div>
-      <div class="h-1.5 bg-gray-200 rounded-full mt-3 overflow-hidden">
+      <div class="h-1.5 bg-page rounded-full mt-3.5 overflow-hidden">
         <div class="h-full bg-brand rounded-full transition-all" style="width:0%" data-role="bar"></div>
       </div>
-      <div class="mt-2 text-sm" data-role="result"></div>`;
+      <div class="mt-2.5 text-sm" data-role="result"></div>`;
     list.prepend(card);
 
     const bar = card.querySelector('[data-role=bar]');
@@ -73,7 +87,10 @@ export async function renderUpload(el) {
       bar.style.width = pct + '%';
       card.querySelector('[data-role=pct]').textContent = pct + '%';
     };
-    xhr.onerror = () => { state.innerHTML = statusBadge('error'); result.textContent = 'Network error'; };
+    xhr.onerror = () => {
+      state.innerHTML = statusBadge('error');
+      result.innerHTML = '<span class="text-red-600">Network error — the upload did not reach the server.</span>';
+    };
     xhr.onload = () => {
       if (xhr.status !== 201) {
         let msg = xhr.statusText;
@@ -85,7 +102,7 @@ export async function renderUpload(el) {
       bar.style.width = '100%';
       const row = JSON.parse(xhr.responseText);
       state.innerHTML = statusBadge(row.status);
-      result.innerHTML = `<span class="text-ink-muted">Classifying with YAMNet…</span>`;
+      result.innerHTML = '<span class="text-ink-muted">Classifying with YAMNet…</span>';
       poll(row.id);
     };
     xhr.send(form);
@@ -97,12 +114,14 @@ export async function renderUpload(el) {
         if (d.status === 'done') {
           const top = d.top_classes[0];
           result.innerHTML = `
-            ✅ Classified — top class:
-            <span class="font-medium">${esc(top ? top.class_name : 'n/a')}</span>
-            ${top ? `<span class="text-ink-muted">(${(top.mean_confidence * 100).toFixed(0)}% mean confidence)</span>` : ''}
-            · <a class="text-brand hover:underline" href="#/audio/${id}">View details →</a>`;
+            <span class="text-ink-secondary">Classified —
+              top class <span class="font-medium text-ink">${esc(top ? top.class_name : 'n/a')}</span>
+              ${top ? `<span class="text-ink-muted">(${(top.mean_confidence * 100).toFixed(0)}% mean confidence)</span>` : ''}
+            </span>
+            <a class="text-brand hover:underline ml-1.5 inline-flex items-center gap-1" href="#/audio/${id}">
+              View details ${icon('arrowRight', { size: 14 })}</a>`;
         } else if (d.status === 'error') {
-          result.innerHTML = '<span class="text-red-600">Classification failed — see server logs.</span>';
+          result.innerHTML = '<span class="text-red-600">Classification failed — check the server logs.</span>';
         } else {
           setTimeout(() => poll(id), POLL_MS);
         }

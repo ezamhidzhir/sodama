@@ -38,3 +38,26 @@ Keputusan teknikal yang di-lock sebelum development bermula. Setiap keputusan ad
 - [x] `POST /devices` / `GET /devices` — device registration, API key generated sekali
 - [x] Migration 3: column `status` + `waveform` (jsonb) dalam `audio_files`
 - [x] E2E tested: upload → classify (chirp → Sine wave/Synthesizer ✓), filter search, ingest + 401 auth, dataset export zip
+
+### Fasa 3 — Frontend Web App — **SIAP**
+- [x] Vanilla JS + Tailwind SPA (hash router) di `frontend/`, disajikan oleh FastAPI `StaticFiles` — satu origin, tiada isu CORS
+- [x] Semua library (Tailwind, Chart.js, WaveSurfer) di-vendor ke `frontend/vendor/` — demo berfungsi tanpa internet
+- [x] 6 page: Dashboard, Upload, Library, Audio Detail, Datasets, Devices
+- [x] Migration 4: RPC `dashboard_stats()` untuk agregat dashboard dalam satu round-trip
+
+### Fasa 3b — Theme redesign + Authentication (29 Julai 2026)
+| # | Keputusan | Pilihan | Justifikasi |
+|---|---|---|---|
+| 9 | Theme warna | Hijau `#4C7438`, krim `#F1F5E8`, coklat `#7A5239` | Pilihan pengguna, gaya eco/natural mengikut rujukan reka bentuk |
+| 10 | Ikon | Inline SVG stroke (`frontend/js/icons.js`) | Pengguna minta **tiada emoji**; SVG inline elak kebergantungan icon-font/CDN |
+| 11 | Palette carta | `#4C7438, #C4452E, #2A6F97, #7A5239, #6B4E9E, #9A7B12` | Susunan dipilih melalui carian permutasi untuk maksimumkan pemisahan CVD; disahkan: semua slot lulus band/chroma/contrast, worst adjacent ΔE2000 = **27.9** (sasaran ≥12). Coklat sengaja **tidak** bersebelahan hijau (pasangan itu hanya 8.1 ΔE bawah protanopia) |
+| 12 | Warna sumber (doughnut) | upload → hijau, esp32 → biru | Pemetaan tetap per-entiti (bukan ikut rank); ΔE 22.3 lulus. Coklat kekal sebagai aksen UI, bukan warna data bersebelahan hijau |
+| 13 | Authentication | Supabase Auth melalui REST (`frontend/js/auth.js`), token dalam localStorage | Tiada library tambahan perlu; anon key disajikan oleh `GET /config` (selamat untuk browser — RLS yang lindungi data) |
+| 14 | `mailer_autoconfirm` | **Diaktifkan** (True) | Free tier ada had hantar emel + `site_url` masih localhost, jadi pengesahan emel akan memutuskan demo. **Untuk production, matikan semula** di Supabase Dashboard → Authentication → Providers → Email → Confirm email |
+
+- [x] Login & signup page (`frontend/js/pages/auth.js`) — panel jenama + borang, tunjuk/sembunyi password, ralat inline
+- [x] Auth guard dalam router: belum log masuk → `#/login`; sudah log masuk → auth page redirect ke dashboard
+- [x] Sign-out + papar emel pengguna dalam sidebar
+- [x] **Semua feature sedia ada kekal** — hanya lapisan UI/UX yang ditukar; tiada endpoint atau logik backend diubah selain menambah `GET /config`
+
+**Had yang diketahui:** guard auth berada di lapisan frontend sahaja. Endpoint API masih terbuka (backend guna service-role key dan memintas RLS seperti sebelum ini) — ini kekalkan aliran ESP32 `/ingest` dan data sedia ada berfungsi. Menguatkuasakan JWT pada setiap endpoint ialah kerja susulan.
