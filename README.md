@@ -54,7 +54,24 @@ cd backend
 .venv/Scripts/python -m uvicorn app.main:app --reload
 ```
 
-Swagger UI: http://127.0.0.1:8000/docs
+Dashboard: http://127.0.0.1:8000 · Swagger UI: http://127.0.0.1:8000/docs
+
+Keep that terminal open — closing it (or `Ctrl+C`) stops the server and
+`127.0.0.1:8000` becomes unreachable.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Browser: "can't connect" / connection refused | uvicorn is not running | Start the server (above) |
+| UI loads but shows "Internal Server Error"; log says `httpx.ConnectError: getaddrinfo failed` | **Supabase free project auto-paused** after ~1 week idle — its hostname stops resolving | Restore it in the Supabase dashboard (project → Restore), or `POST /v1/projects/{ref}/restore` on the Management API. Takes a few minutes; data is preserved |
+| Upload succeeds but the card shows "Classification failed"; log says `contains neither 'saved_model.pb' nor 'saved_model.pbtxt'` | The cached YAMNet download is incomplete or was wiped (TF Hub's default cache lives in the OS temp directory) | Handled automatically — the loader clears the cache and re-downloads. The cache now lives in `backend/yamnet_cache/` instead of temp, so OS cleanup can't break it again |
+| `ModuleNotFoundError: pkg_resources` | setuptools ≥ 81 removed `pkg_resources`, which tensorflow-hub imports | `uv pip install --python .venv/Scripts/python.exe "setuptools<81"` |
+
+> **Before a demo or VIVA:** open the dashboard a few minutes early. If the
+> Supabase project has auto-paused, restoring it takes several minutes — not
+> something you want to discover in front of an examiner. Any activity on the
+> project resets the inactivity timer.
 
 | Endpoint | Purpose |
 |---|---|

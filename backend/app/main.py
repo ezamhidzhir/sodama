@@ -5,11 +5,15 @@ Run from the backend/ directory:
 Swagger UI: http://127.0.0.1:8000/docs
 """
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-from .routers import audio_files, datasets, devices, ingest, upload
+from .routers import audio_files, datasets, devices, ingest, stats, upload
+
+FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -35,8 +39,13 @@ app.include_router(audio_files.router)
 app.include_router(datasets.router)
 app.include_router(devices.router)
 app.include_router(ingest.router)
+app.include_router(stats.router)
 
 
 @app.get("/health", tags=["system"])
 def health():
     return {"status": "ok"}
+
+
+# dashboard SPA — mounted last so API routes take precedence
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

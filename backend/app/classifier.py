@@ -3,9 +3,15 @@
 YAMNet scores audio in 0.96s windows with a 0.48s hop; each window's top-k
 classes are stored as rows in the `classifications` table.
 """
+import logging
+import shutil
 import threading
 
 import numpy as np
+
+from . import config  # sets TFHUB_CACHE_DIR before TF Hub reads it
+
+logger = logging.getLogger(__name__)
 
 YAMNET_HANDLE = "https://tfhub.dev/google/yamnet/1"
 WINDOW_SECONDS = 0.96
@@ -24,7 +30,16 @@ def load_model():
             import tensorflow as tf
             import tensorflow_hub as hub
 
-            _model = hub.load(YAMNET_HANDLE)
+            try:
+                _model = hub.load(YAMNET_HANDLE)
+            except ValueError:
+                # A half-finished download leaves a directory TF Hub accepts as
+                # a cache but cannot load. Clear it and fetch the model again.
+                logger.warning("YAMNet cache at %s is corrupt — re-downloading",
+                               config.YAMNET_CACHE_DIR)
+                shutil.rmtree(config.YAMNET_CACHE_DIR, ignore_errors=True)
+                config.YAMNET_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                _model = hub.load(YAMNET_HANDLE)
             class_map = _model.class_map_path().numpy().decode()
             _class_names = [
                 line.split(",")[2].strip().strip('"')

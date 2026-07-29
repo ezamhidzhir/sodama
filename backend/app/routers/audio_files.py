@@ -32,7 +32,11 @@ def list_audio(
         if min_confidence is not None:
             q = q.gte("classifications.confidence", min_confidence)
     else:
-        q = client.table("audio_files").select("*", count="exact")
+        q = client.table("audio_files").select(
+            "*, classifications(class_name, confidence)", count="exact")
+    # embed only the single highest-confidence row -> becomes top_class below
+    q = q.order("confidence", desc=True, foreign_table="classifications") \
+         .limit(1, foreign_table="classifications")
 
     if source:
         q = q.eq("source", source)
@@ -48,8 +52,9 @@ def list_audio(
 
     items = res.data
     for item in items:
-        item.pop("classifications", None)  # join payload not needed in list view
-        item.pop("waveform", None)         # keep list responses light
+        top = item.pop("classifications", None)
+        item["top_class"] = top[0] if top else None
+        item.pop("waveform", None)  # keep list responses light
     return {"items": items, "total": res.count, "page": page, "per_page": per_page}
 
 

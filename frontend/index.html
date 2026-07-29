@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sound Data Management System</title>
+<script src="/vendor/tailwind.js"></script>
+<script>
+tailwind.config = {
+  theme: { extend: { colors: {
+    brand:  { DEFAULT: '#2a78d6', dark: '#1c5cab', light: '#cde2fb' },
+    ink:    { DEFAULT: '#0b0b0b', secondary: '#52514e', muted: '#898781' },
+    surface:{ DEFAULT: '#fcfcfb', page: '#f9f9f7' },
+    grid:   '#e1e0d9',
+  }}}
+}
+</script>
+<script src="/vendor/chart.umd.min.js"></script>
+<script src="/vendor/wavesurfer.min.js"></script>
+<style>
+  html { scrollbar-gutter: stable; }
+  .nav-link.active { background: #cde2fb; color: #1c5cab; font-weight: 600; }
+  .fade-in { animation: fadeIn .18s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(3px);} to { opacity: 1; transform: none;} }
+  input[type=range]::-webkit-slider-thumb { background: #2a78d6; }
+</style>
+</head>
+<body class="bg-surface-page text-ink min-h-screen font-sans antialiased">
+
+<div class="flex min-h-screen">
+  <!-- Sidebar -->
+  <aside class="w-60 shrink-0 bg-white border-r border-grid flex flex-col">
+    <div class="px-5 py-5 border-b border-grid">
+      <div class="text-lg font-bold leading-tight">🎵 Sound Data<br>Management</div>
+      <div class="text-xs text-ink-muted mt-1">for ML Trainers · UTP FYP</div>
+    </div>
+    <nav class="flex-1 p-3 space-y-1 text-sm" id="nav">
+      <a href="#/dashboard" data-page="dashboard" class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100">📊 <span>Dashboard</span></a>
+      <a href="#/upload"    data-page="upload"    class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100">⬆️ <span>Upload</span></a>
+      <a href="#/library"   data-page="library"   class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100">🔍 <span>Library</span></a>
+      <a href="#/datasets"  data-page="datasets"  class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100">🗂️ <span>Datasets</span></a>
+      <a href="#/devices"   data-page="devices"   class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100">📡 <span>Devices</span></a>
+    </nav>
+    <div class="p-4 text-xs text-ink-muted border-t border-grid">
+      <a href="/docs" target="_blank" class="hover:text-brand">API Docs (Swagger) ↗</a>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 min-w-0 p-6 lg:p-8" id="page"></main>
+</div>
+
+<div id="toasts" class="fixed bottom-5 right-5 space-y-2 z-50"></div>
+
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>
