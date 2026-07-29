@@ -1,0 +1,4 @@
+# Railway/Nixpacks looks for a requirements.txt at the repo root.
+# The whole repo is deployed as one service: FastAPI serves the API and the
+# dashboard in frontend/, so the build cannot be scoped to backend/ alone.
+-r backend/requirements.txt

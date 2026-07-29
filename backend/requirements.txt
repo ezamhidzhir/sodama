@@ -1,7 +1,9 @@
 fastapi
 uvicorn[standard]
 python-multipart
-tensorflow
+# CPU build: on Linux the plain `tensorflow` wheel drags in ~600 MB of CUDA
+# libraries that a server with no GPU never uses. Same import name either way.
+tensorflow-cpu
 tensorflow-hub
 setuptools<81   # tensorflow-hub imports pkg_resources, removed in setuptools 81+
 librosa

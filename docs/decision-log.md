@@ -9,7 +9,7 @@ Keputusan teknikal yang di-lock sebelum development bermula. Setiap keputusan ad
 | 3 | Mikrofon ESP32 | **INMP441 (I2S digital)** | Analog mic (MAX4466) noise tinggi; I2S bagi PCM bersih terus, tak perlu ADC calibration. |
 | 4 | Format audio | **WAV 16kHz mono 16-bit** | YAMNet expect 16kHz mono; standardkan dari awal elak resampling bugs. |
 | 5 | Streaming protocol ESP32 → server | **HTTP chunked POST** (fallback: WebSocket) | Lebih mudah debug dari WebSocket; ESP32 HTTPClient stabil. |
-| 6 | Hosting backend | Local/ngrok untuk dev; **Railway/Render free tier** untuk demo | Vercel tak sesuai untuk TensorFlow backend (serverless timeout + size limit). |
+| 6 | Hosting backend | Local/ngrok untuk dev; **Railway** untuk demo | Vercel tak sesuai untuk TensorFlow backend (serverless timeout + size limit). **Railway dipilih atas Render** (dikunci 29 Julai 2026): Render free hanya 512MB RAM — TensorFlow sahaja hampir capai had itu, risiko OOM tinggi; Render juga tidur selepas ~15 min, yang memutuskan request pertama ESP32 ke `/ingest` dan melambatkan demo. Railway kekal jaga, jadi projek Supabase pun tak auto-pause. Lihat `docs/deployment.md`. |
 | 7 | Python version (backend) | **Python 3.12 (via uv)** | Sistem ada Python 3.14, tapi TensorFlow belum support 3.14. venv 3.12 dibuat dengan `uv venv --python 3.12`. *(Ditambah semasa Fasa 0, 8 Julai 2026.)* |
 | 8 | Supabase project | **Project berasingan `sound-data-mgmt`** (jangan campur godsplan-store) | Isolation data FYP dari projek lain; RLS policies sendiri. Akaun lama capai free tier limit, jadi project dibuat di **akaun Supabase baru** (org godsplan.my@gmail.com, ref `tfbroxaxzhrcniwrobrg`, region ap-southeast-2). |
 
