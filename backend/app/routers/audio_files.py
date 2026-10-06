@@ -32,7 +32,7 @@ def list_audio(
     q: str | None = Query(None, max_length=100, description="Search filename or label"),
     class_name: str | None = Query(None, description="Filter: YAMNet class, e.g. 'Speech'"),
     min_confidence: float | None = Query(None, ge=0, le=1),
-    source: str | None = Query(None, pattern="^(upload|esp32|recording)$"),
+    source: str | None = Query(None, pattern="^(upload|device|recording)$"),
     status: str | None = Query(None, pattern="^(pending|processing|done|error)$"),
     review_status: str | None = Query(
         None, pattern="^(unreviewed|approved|rejected)$",

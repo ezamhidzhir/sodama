@@ -1,4 +1,4 @@
-"""One path into the library for every source — upload, ESP32 and recording.
+"""One path into the library for every source — upload, device and recording.
 
 Each source used to repeat the same five steps (encode, store, insert, queue
 YAMNet). Keeping them in one place means a recording made on a phone lands in
@@ -43,19 +43,25 @@ def create_clip(client, background: BackgroundTasks, *, waveform: np.ndarray,
     client.storage.from_(config.AUDIO_BUCKET).upload(
         storage_path, wav_bytes, {"content-type": "audio/wav"})
 
-    row = client.table("audio_files").insert({
-        "id": file_id,
-        "user_id": user_id,
-        "filename": filename,
-        "storage_path": storage_path,
-        "duration": round(waveform.size / audio.SAMPLE_RATE, 3),
-        "sample_rate": audio.SAMPLE_RATE,
-        "file_size": len(wav_bytes),
-        "source": source,
-        "status": "pending",
-        "waveform": audio.waveform_peaks(waveform),
-        **(extra or {}),
-    }).execute().data[0]
+    try:
+        row = client.table("audio_files").insert({
+            "id": file_id,
+            "user_id": user_id,
+            "filename": filename,
+            "storage_path": storage_path,
+            "duration": round(waveform.size / audio.SAMPLE_RATE, 3),
+            "sample_rate": audio.SAMPLE_RATE,
+            "file_size": len(wav_bytes),
+            "source": source,
+            "status": "pending",
+            "waveform": audio.waveform_peaks(waveform),
+            **(extra or {}),
+        }).execute().data[0]
+    except Exception:
+        # No row points at the object, so nothing would ever delete it. A device
+        # retrying the same recording hits this on the unique client-id index.
+        client.storage.from_(config.AUDIO_BUCKET).remove([storage_path])
+        raise
 
     background.add_task(tasks.run_classification, file_id, waveform)
     return row

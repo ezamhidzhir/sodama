@@ -33,3 +33,5 @@ Thumbs.db
 # PlatformIO / Arduino build artifacts
 firmware/.pio/
 firmware/build/
+client/spool/
+spool/

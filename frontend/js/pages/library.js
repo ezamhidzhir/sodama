@@ -53,7 +53,7 @@ export async function renderLibrary(el) {
           <label class="block text-xs text-ink-muted mb-1.5">Source</label>
           <select name="source" class="${INPUT}">
             <option value="">All sources</option><option value="recording">Recorded</option>
-            <option value="upload">Upload</option><option value="esp32">ESP32</option>
+            <option value="upload">Upload</option><option value="device">Device</option>
           </select>
         </div>
         <div>

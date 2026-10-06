@@ -111,3 +111,21 @@ Empat keperluan baharu: (1) antara muka mesra telefon pintar, (2) rakam bunyi te
 - [x] `backend/app/auth.py` (JWT + profil), `clips.py` (satu laluan simpan untuk upload/ESP32/rakaman)
 - [x] Router baharu: `recordings`, `community`, `profile`; semua router lama diskop per pengguna
 - [x] Frontend: halaman Record, Community (senarai, dataset, pengguna), Profile, Forgot/Reset password; Datasets menjadi halaman per-folder dengan imbangan kelas dan panel kongsi; shell mobile
+
+### Fasa 6a — Aliran upload peranti-agnostik (6 Oktober 2026)
+
+Maklum balas supervisor: aliran ESP32 → server sukar difahami kerana ia "bergantung pada peranti". Kini ada **satu kontrak** untuk mana-mana klien yang memegang API key peranti.
+
+| # | Keputusan | Pilihan | Sebab |
+|---|---|---|---|
+| 36 | Kontrak upload | rakam → `POST /ingest` → resit → klien padam salinan sendiri **hanya** jika `sha256` dalam resit sama dengan hash yang dikira sendiri | Storan peranti tidak penuh, dan rakaman tidak hilang jika rangkaian putus: tiada resit sah = tiada padam = hantar semula. |
+| 37 | Idempotensi | `X-Client-Id` (UUID dari klien), unik per peranti; chunk stream juga unik pada `(session_id, chunk_index)` | Jika fail sampai tetapi balasan hilang, cubaan semula dijawab dengan resit asal (200) — tiada salinan berganda. |
+| 38 | Integriti | `X-Content-SHA256` pilihan; tidak sepadan → 422, klien hantar semula | Mengesan badan yang rosak semasa penghantaran sebelum ia disimpan. |
+| 39 | Mod stream | Chunk ~10 s di bawah `session_id`; `join=true` → chunk disimpan di luar Library (`ingest_chunks`) dan dicantum menjadi satu rakaman apabila sesi ditutup | Peranti mati di tengah jalan hanya kehilangan chunk terakhir. Library tidak pernah menunjukkan separuh rakaman. |
+| 40 | Tutup sesi | `POST /ingest/sessions/{id}/close?chunks=N`; chunk hilang → 409 dengan senarai indeks; status `joining` sebagai kunci | Rakaman bercantum tidak pernah mempunyai lubang senyap; dua panggilan serentak tidak menghasilkan dua rakaman. |
+| 41 | Nama sumber | `esp32` → `device` (data lama dikemas kini) | Laptop yang menghantar data bukan ESP32; label sumber menggambarkan saluran, bukan perkakasan. |
+| 42 | Klien rujukan | `client/sodama_client.py` — stdlib sahaja (`sounddevice` untuk mic); mod `send`, `watch`, `mic --chunk 10 [--join]`; chunk ditulis ke folder *spool* dahulu | Demo aliran penuh tanpa menunggu perkakasan; spool bermakna crash pun tidak kehilangan data — larian seterusnya menyambung. |
+
+- [x] Migration 9: `audio_files.client_id/sha256/session_id/chunk_index`, indeks unik, jadual `ingest_sessions` + `ingest_chunks` (RLS tanpa polisi), `source` `esp32` → `device`
+- [x] `/ingest` terima fail audio (WAV/FLAC/MP3/OGG) atau PCM mentah (serasi ke belakang)
+- [x] Halaman Devices: kad "How a device sends audio"

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 from .. import config
 from ..auth import USERNAME_RE, User, _profiled, current_user, forget_token
 from ..db import get_client
+from .ingest import discard_pending_chunks
 
 router = APIRouter(tags=["profile"])
 
@@ -158,6 +159,8 @@ def delete_me(body: DeleteAccount, user: User = Depends(current_user),
         client.storage.from_(config.AUDIO_BUCKET).remove(paths[i:i + 100])
     if profile.get("avatar_path"):
         client.storage.from_(AVATAR_BUCKET).remove([profile["avatar_path"]])
+    discard_pending_chunks(client, [d["id"] for d in client.table("devices").select("id")
+                                    .eq("user_id", user.id).execute().data])
 
     # audio_files.user_id is ON DELETE SET NULL, so rows must go explicitly;
     # classifications, metadata and dataset links cascade from them.

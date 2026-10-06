@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import User, current_user
 from ..db import get_client
+from .ingest import discard_pending_chunks
 
 router = APIRouter(tags=["devices"])
 
@@ -27,7 +28,7 @@ def _get_device_or_404(client, device_id: str, user: User) -> dict:
 
 
 @router.post("/devices", status_code=201,
-             summary="Register an ESP32 device (returns its API key once)")
+             summary="Register a recording device or client (returns its API key once)")
 def create_device(body: DeviceCreate, user: User = Depends(current_user)):
     client = get_client()
     name = body.device_name.strip()
@@ -39,7 +40,7 @@ def create_device(body: DeviceCreate, user: User = Depends(current_user)):
     row = client.table("devices").insert({
         "device_name": name, "api_key": secrets.token_hex(24), "user_id": user.id,
     }).execute().data[0]
-    # only time the full key is returned — flash it into the ESP32 firmware
+    # only time the full key is returned — put it in the firmware or client config
     return row
 
 
@@ -87,4 +88,5 @@ def delete_device(device_id: str, user: User = Depends(current_user)):
     `devices`, so nothing cascades."""
     client = get_client()
     _get_device_or_404(client, device_id, user)
+    discard_pending_chunks(client, [device_id])
     client.table("devices").delete().eq("id", device_id).execute()

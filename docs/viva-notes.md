@@ -30,16 +30,17 @@ apa yang anda cakap depan examiner sama dengan apa yang sistem betul-betul buat.
 | Cache token JWT (backend) | **60 s** | Elak round-trip setiap request |
 | Split default | **70 / 15 / 15** | Stratified per kelas + seeded |
 | Min confidence carta dashboard | **0.3** | Elak tekaan lemah naik ranking |
-| Table dalam DB | **8** — audio_files, classifications, metadata, datasets, dataset_items, dataset_likes, devices, profiles | Semua RLS enabled |
+| Table dalam DB | **10** — audio_files, classifications, metadata, datasets, dataset_items, dataset_likes, devices, profiles, ingest_sessions, ingest_chunks | Semua RLS enabled |
 | RPC (function SQL) | **2** — `dashboard_stats`, `community_datasets` | Agregat satu round-trip |
-| Sumber audio (`source`) | `upload`, `recording`, `esp32` | 3 cara audio masuk |
+| Sumber audio (`source`) | `upload`, `recording`, `device` | 3 cara audio masuk (`device` = mana-mana klien ber-API key; dulu `esp32`) |
 | Status pipeline (`status`) | `pending → processing → done \| error` | Keadaan **mesin** |
 | Status semakan (`review_status`) | `unreviewed \| approved \| rejected` | Keputusan **manusia** |
 | Asal label (`label_source`) | `human_annotated`, `human_confirmed`, `human_corrected`, `auto` | 4 tahap kepercayaan |
 | Lesen untuk publish | CC-BY-4.0, CC-BY-SA-4.0, CC-BY-NC-4.0, CC0-1.0 | Wajib pilih satu |
 | Hosting | Railway — satu service (API + frontend), **1 worker** | 1 worker = 1 salinan YAMNet dalam RAM |
 | DB / Storage / Auth | Supabase (PostgreSQL + Storage + Auth) | ref `tfbroxaxzhrcniwrobrg` |
-| Hardware | ESP32 DevKit + INMP441 (I2S) | Firmware **belum** ditulis |
+| Hardware | ESP32 DevKit + INMP441 (I2S) | Firmware **belum** ditulis — aliran device didemo dengan `client/sodama_client.py` di laptop |
+| Panjang chunk stream | **~10 s** | Peranti mati → hilang 10 s sahaja |
 
 **Satu ayat yang kena hafal betul-betul:**
 > "SODAMA ialah sistem web berpusat untuk **kumpul, seragamkan, label, semak, susun, export
@@ -118,7 +119,7 @@ Ayat penutup: *"SODAMA duduk di antara mikrofon dan HuggingFace — bahagian yan
 **Apa berlaku step demi step bila satu fail masuk** (soalan "walk me through your system"):
 
 1. **Client hantar** — `POST /upload` (multipart), `POST /recordings` (dari telefon), atau
-   `POST /ingest` (raw PCM dari ESP32 dengan `X-API-Key`).
+   `POST /ingest` (fail audio atau raw PCM dari mana-mana device dengan `X-API-Key`).
 2. **Backend semak siapa** — `Depends(current_user)` → sahkan JWT Supabase → dapat `user.id`.
    (`/ingest` guna API key device, bukan JWT.)
 3. **Validate** — extension (.wav/.mp3/.flac/.ogg), tidak kosong, ≤ 50 MB.
@@ -126,7 +127,7 @@ Ayat penutup: *"SODAMA duduk di antara mikrofon dan HuggingFace — bahagian yan
    resample; stereo → campur jadi mono.
 5. **Satu laluan sama untuk semua sumber** — `clips.create_clip()`:
    - encode balik jadi WAV 16-bit
-   - upload ke Storage (`uploads/<uuid>.wav`, `recordings/<user>/<uuid>.wav`, `esp32/<nama>/<uuid>.wav`)
+   - upload ke Storage (`uploads/<uuid>.wav`, `recordings/<user>/<uuid>.wav`, `devices/<nama>/<uuid>.wav`)
    - insert row `audio_files` dengan `status='pending'` + 600 waveform peaks
    - `background.add_task(run_classification, ...)`
 6. **Background task** — `status='processing'` → YAMNet jalan → insert ke `classifications`
@@ -497,23 +498,50 @@ di-cache dalam `Map`).
   kemudian bagi browser blob URL.
 - Upload guna `XMLHttpRequest`, bukan fetch, sebab **fetch tak boleh report upload progress**.
 
-### 7.15 ESP32 ingest — `routers/ingest.py`
-```
-ESP32 ──POST /ingest?sample_rate=16000──► header X-API-Key: <device key>
-        body = raw little-endian 16-bit mono PCM (chunked POST OK)
-```
-1. Cari device ikut `api_key` → tiada → **401**.
-2. Saiz < 3200 bait (0.1 s) → 400; > 50 MB → 413; bait ganjil terakhir dibuang (chunk terpotong).
-3. `pcm16_to_standard()` → bahagi 32768 → float; resample kalau bukan 16 kHz.
-4. Masuk laluan `create_clip()` yang **sama** dengan upload → klip jadi milik **pemilik device**
-   (`device["user_id"]`), `device_id` diisi, `recorded_at` = masa tiba.
-5. `devices.last_seen` dikemas kini (halaman Devices tunjuk device hidup atau tidak).
+### 7.15 Device ingest — `routers/ingest.py` (aliran peranti-agnostik)
 
-**Kenapa API key, bukan JWT?** ESP32 tiada UI untuk login, tiada tempat selamat untuk simpan
+Supervisor: aliran mesti **tidak bergantung pada device**. Satu peraturan untuk semua klien
+(ESP32, program di laptop, ...):
+
+```
+DEVICE                                         SERVER
+1. rakam 10 s, simpan dalam storan sendiri
+2. POST /ingest  ───────────────────────────►  3. simpan, kira SHA-256
+   X-API-Key, X-Client-Id, X-Content-SHA256
+5. hash resit == hash sendiri?  ◄────────────  4. resit {status, sha256, audio_id}
+   ya → PADAM salinan sendiri
+   tidak / tiada jawapan → simpan, hantar semula
+```
+
+1. Cari device ikut `api_key` → tiada → **401**.
+2. Saiz < 3200 bait → 400; > 50 MB → 413.
+3. Kira SHA-256 badan. Klien hantar hash lain → **422** (rosak dalam perjalanan, hantar semula).
+4. `X-Client-Id` sudah wujud untuk device ini → **200 + resit asal** (bukan simpan dua kali).
+   Id sama tapi audio lain → 409. Ini dijamin juga oleh *unique index* `(device_id, client_id)`.
+5. Badan = fail audio (WAV/FLAC/MP3/OGG, dikesan ikut `Content-Type` atau *magic bytes*) atau
+   raw PCM 16-bit (serasi dengan reka bentuk ESP32 asal).
+6. Masuk laluan `create_clip()` yang **sama** dengan upload; `source='device'`,
+   `recorded_at` = `X-Recorded-At` (jam device) atau masa tiba. **201 + resit.**
+
+**Mod stream:** `?session_id=<uuid>&chunk_index=0,1,2…` — setiap chunk ~10 s dihantar sebaik siap.
+- `join=false` → setiap chunk jadi satu klip dalam Library.
+- `join=true` → chunk disimpan dalam `ingest_chunks` (**tidak** muncul dalam Library).
+  `POST /ingest/sessions/{id}/close?chunks=N` → semak 0..N-1 lengkap (hilang → **409** dengan
+  senarai `missing`, klien hantar semula) → cantum ikut urutan → satu rakaman → padam chunk.
+  Status `open → joining → closed`; `joining` ialah kunci supaya dua *close* serentak tidak
+  menghasilkan dua rakaman. Panggil *close* semula = jawapan sama (idempoten).
+
+**Klien rujukan** `client/sodama_client.py` (Python stdlib): `send`, `watch <folder>`,
+`mic --chunk 10 [--join]`. Chunk ditulis ke folder `spool/` dahulu dan hanya dipadam selepas
+resit sah — kalau program crash atau internet putus, larian seterusnya sambung hantar.
+
+**Kenapa API key, bukan JWT?** Device tiada UI untuk login, tiada tempat selamat untuk simpan
 refresh token, dan tak boleh renew token. API key setiap device = boleh revoke satu device
 tanpa sentuh yang lain.
-**Kenapa raw PCM, bukan fail WAV?** ESP32 dapat PCM terus dari I2S; tak perlu bina header WAV
-atas microcontroller, dan chunked streaming jadi lebih mudah.
+**Kenapa client yang pilih id, bukan server?** Kalau balasan server hilang, client tak tahu id
+yang server beri. Id dari client wujud *sebelum* upload, jadi cubaan semula boleh dikenali.
+**Kenapa padam hanya selepas hash sepadan, bukan selepas HTTP 200?** 200 hanya bermaksud
+server terima *sesuatu*. Hash yang sama membuktikan server simpan bait yang **sama**.
 
 ---
 
@@ -892,9 +920,10 @@ kuat kalau aksesibiliti ditanya.)*
 ### G. Hardware / ESP32 — jawab dengan JUJUR
 
 **G1. Tunjukkan bahagian ESP32 berfungsi.** ⭐ *(soalan paling berisiko)*
-→ **Jawapan jujur:** "Bahagian **server** siap dan boleh diuji: `POST /ingest` menerima raw PCM
-16-bit dengan autentikasi `X-API-Key`, resample kalau perlu, dan masuk laluan simpan yang
-**sama** dengan upload. Saya boleh tunjuk sekarang melalui Swagger. Yang **belum siap ialah
+→ **Jawapan jujur:** "Aliran device siap dan **tidak bergantung pada perkakasan**: mana-mana
+klien ikut kontrak yang sama — hantar, dapat resit, padam hanya bila hash sepadan. Saya
+demo dengan program di laptop kedua (`sodama_client.py mic --chunk 10 --join`): anda boleh
+lihat fail hilang dari laptop itu dan muncul dalam Library. Yang **belum siap ialah
 firmware ESP32** — hardware (ESP32 DevKit + INMP441) belum dibeli, jadi kod I2S capture belum
 ditulis. Pendawaian dan reka bentuk firmware sudah didokumenkan dalam `firmware/README.md`
 (SD→GPIO32, SCK→GPIO26, WS→GPIO25, L/R→GND), dan ia tidak memerlukan perubahan pada server
@@ -1070,7 +1099,8 @@ yang jelas."
 
 | # | Kelemahan | Jawapan bila ditanya | Pembaikan yang betul |
 |---|---|---|---|
-| 1 | **Firmware ESP32 belum ada** | Endpoint `/ingest` siap & boleh didemo di Swagger; hardware belum dibeli | Beli ESP32+INMP441, tulis I2S capture + chunked POST |
+| 1 | **Firmware ESP32 belum ada** | Kontrak `/ingest` siap; didemo dengan klien Python di laptop kedua; hardware belum dibeli | Beli ESP32+INMP441, tulis I2S capture + kontrak yang sama |
+| 1b | **Sesi stream yang tak pernah ditutup** | Chunk `join` kekal dalam `ingest_chunks` (dibuang bila device/akaun dipadam) | Sweeper: tutup automatik sesi tanpa chunk baru > 1 jam |
 | 2 | **Tiada automated test suite** | Ada 2 skrip pengesahan + ujian manual setiap fasa | pytest untuk endpoint, Playwright untuk UI, CI |
 | 3 | **Job klasifikasi boleh tersangkut** kalau server restart masa `processing` | Diketahui; tiada retry | Queue (Celery/RQ) + sweeper re-queue baris `processing` > 10 min |
 | 4 | **Export bina ZIP dalam memori** | OK untuk saiz demo, tidak untuk 100k fail | Stream ZIP, atau manifest + presigned URL |

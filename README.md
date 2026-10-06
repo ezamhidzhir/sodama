@@ -2,13 +2,14 @@
 
 Final Year Project (FYP) — Muhammad Ezamuddin Bin Hidzhir (24000202), Universiti Teknologi PETRONAS.
 
-A centralized, mobile-friendly web system for collecting, labelling, organizing, exporting and sharing audio datasets for machine learning training. Audio is recorded on a phone inside the app, uploaded, or streamed from an ESP32 + INMP441 sensor; it is automatically classified with YAMNet, labelled by people, and managed per user account through a searchable dashboard backed by Supabase. Finished datasets can be exported as HuggingFace-ready ZIPs or published to the in-app Community.
+A centralized, mobile-friendly web system for collecting, labelling, organizing, exporting and sharing audio datasets for machine learning training. Audio is recorded on a phone inside the app, uploaded, or sent by any registered device — an ESP32 + INMP441 sensor or a program on another computer; it is automatically classified with YAMNet, labelled by people, and managed per user account through a searchable dashboard backed by Supabase. Finished datasets can be exported as HuggingFace-ready ZIPs or published to the in-app Community.
 
 ## Repository Structure
 
 ```
 /backend    FastAPI server — audio upload, YAMNet inference, metadata, dataset APIs
 /frontend   Mobile-first web app (HTML/CSS/JS) — record, library, datasets, community, profile
+/client     Reference device client (Python) — send files, watch a folder, or stream the mic
 /firmware   ESP32 + INMP441 firmware (I2S capture, WAV encode, HTTP chunked upload)
 /docs       Project documentation, decision log, database schema
 ```
@@ -92,12 +93,45 @@ Supabase and scopes every query to that user's own rows.
 | `GET /community/datasets/{id}` (+ `/download`, `/like`) | Public dataset card, sample player, download, like |
 | `GET /community/users/{username}` | A contributor's public page |
 | `GET/PATCH/DELETE /me`, `POST /me/avatar` | Own profile, avatar, account deletion |
-| `POST /ingest` | ESP32 raw PCM ingest — `X-API-Key` auth; clips belong to the device's owner |
+| `POST /ingest` | Device upload (audio file or raw PCM) — `X-API-Key` auth; returns a receipt; idempotent with `X-Client-Id`; stream chunks with `session_id` + `chunk_index` |
+| `POST /ingest/sessions/{id}/close` | Finish a stream session; with `join=true` its chunks become one recording |
 | `POST /devices` | Register a device; API key returned once |
 
 Classification runs as a FastAPI background task: `audio_files.status` goes
 `pending → processing → done` (or `error`), and per-0.96s-window top-3 YAMNet
 classes land in the `classifications` table.
+
+## Sending audio from a device
+
+Anything that records can feed SODAMA — an ESP32, or a program on another
+laptop. Register it on the **Devices** page to get an API key, then every
+client follows the same loop:
+
+```
+record -> POST /ingest -> receipt -> delete the local copy -> record again
+```
+
+The receipt carries the SHA-256 of what the server stored. The client deletes
+its copy **only** when that matches its own hash, so a dropped connection never
+loses a recording — it is simply sent again. The client tags each recording
+with `X-Client-Id`; a repeat is answered with the original receipt (200 instead
+of 201), so retries never create duplicates.
+
+**Stream mode** sends ~10 s chunks as they are recorded, under a `session_id`
+with a `chunk_index`. Closing the session (`POST /ingest/sessions/{id}/close?chunks=N`)
+reports any chunk that never arrived. With `join=true` the chunks stay out of
+the Library and are stitched into one continuous recording on close.
+
+```powershell
+pip install sounddevice numpy        # only needed for mic mode
+$env:SODAMA_SERVER = "http://127.0.0.1:8000"; $env:SODAMA_API_KEY = "<key>"
+python client/sodama_client.py send take1.wav take2.wav   # upload, delete each once confirmed
+python client/sodama_client.py watch C:\recordings         # upload whatever lands in a folder
+python client/sodama_client.py mic --chunk 10 --join       # stream the microphone, one recording
+```
+
+Chunks are written to a `spool/` folder before upload; if the client crashes or
+the network is down, the next run finishes sending them.
 
 ## Recording in the app
 

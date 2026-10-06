@@ -8,8 +8,8 @@ export const CAT = ['#4C7438', '#C4452E', '#2A6F97', '#7A5239', '#6B4E9E', '#9A7
 // Stable per-entity colours: a filter must never repaint the survivors.
 // Recording takes the red-orange slot, not the brown: brown beside the brand
 // green is the one pair the palette check rejects under protanopia.
-const SOURCE_COLOR = { upload: '#4C7438', esp32: '#2A6F97', recording: '#C4452E' };
-const SOURCE_NAME = { upload: 'Upload', esp32: 'ESP32', recording: 'Recorded' };
+const SOURCE_COLOR = { upload: '#4C7438', device: '#2A6F97', recording: '#C4452E' };
+const SOURCE_NAME = { upload: 'Upload', device: 'Device', recording: 'Recorded' };
 const INK_SECONDARY = '#4A5643', INK_MUTED = '#626D58', LINE = '#DCE5CE';
 
 const tile = (label, value, sub, iconName) => `
@@ -103,7 +103,7 @@ export async function renderDashboard(el) {
       </div>
       <div class="bg-white rounded-xl2 shadow-card p-4 sm:p-6">
         <div class="font-semibold">Files by source</div>
-        <div class="text-xs text-ink-muted mt-1 mb-4">Recorded in the app, uploaded, or streamed from ESP32</div>
+        <div class="text-xs text-ink-muted mt-1 mb-4">Recorded in the app, uploaded, or sent by a device</div>
         <div class="relative h-64 flex items-center justify-center">
           ${Object.keys(stats.files_by_source).length ? '<canvas id="sourceChart"></canvas>'
             : emptyState('device', 'No files yet', '')}
@@ -121,7 +121,7 @@ export async function renderDashboard(el) {
       <div class="divide-y divide-line/60">
         ${recent.items.map((f) => `
           <a href="#/audio/${f.id}" class="flex items-center gap-3 py-3 hover:bg-page/60 -mx-2 px-2 rounded-xl">
-            <span class="w-10 h-10 rounded-full bg-page text-brand grid place-items-center shrink-0">${icon(f.source === 'recording' ? 'mic' : f.source === 'esp32' ? 'device' : 'clip', { size: 17 })}</span>
+            <span class="w-10 h-10 rounded-full bg-page text-brand grid place-items-center shrink-0">${icon(f.source === 'recording' ? 'mic' : f.source === 'device' ? 'device' : 'clip', { size: 17 })}</span>
             <div class="min-w-0 flex-1">
               <div class="font-medium truncate">${esc(f.verified_label || f.top_class?.class_name || f.filename)}</div>
               <div class="text-xs text-ink-muted truncate">${fmtDuration(f.duration)} · ${fmtDate(f.recorded_at || f.uploaded_at)}${f.location_name ? ` · ${esc(f.location_name)}` : ''}</div>

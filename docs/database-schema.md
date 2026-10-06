@@ -9,13 +9,14 @@ audio_files 1 ──< classifications      (per-window YAMNet results)
 audio_files 1 ──< metadata             (flexible key-value tags, e.g. notes)
 datasets    >──< audio_files           (via dataset_items, many-to-many)
 datasets    >──< auth.users            (via dataset_likes — Community likes)
-devices     1 ──< audio_files          (ESP32 clips, device_id)
+devices     1 ──< audio_files          (device clips, device_id)
+devices     1 ──< ingest_sessions 1 ──< ingest_chunks   (stream mode)
 ```
 
 ## Tables
 
 ### audio_files
-One row per audio file (in-app recording, manual upload or ESP32 stream).
+One row per audio file (in-app recording, manual upload, or a registered device).
 
 | Column | Type | Notes |
 |---|---|---|
@@ -25,20 +26,23 @@ One row per audio file (in-app recording, manual upload or ESP32 stream).
 | duration | double | seconds |
 | sample_rate | int | Hz — target 16000 |
 | file_size | bigint | bytes |
-| source | text | `upload` \| `esp32` \| `recording` (check constraint) |
+| source | text | `upload` \| `device` \| `recording` (check constraint; `device` was `esp32` before migration 9) |
 | uploaded_at | timestamptz | default `now()` |
-| user_id | uuid FK → auth.users | owner; ESP32 clips take the device's owner |
+| user_id | uuid FK → auth.users | owner; device clips take the device's owner |
 | status | text | pipeline: `pending` → `processing` → `done` \| `error` |
 | waveform | jsonb | 600 precomputed peaks for the player |
 | review_status | text | human verdict: `unreviewed` \| `approved` \| `rejected` |
 | verified_label | text | label a person gave; NULL = only YAMNet's guess |
 | label_origin | text | `capture` (named while recording) \| `review` \| NULL |
 | reviewed_by, reviewed_at, review_note | | who gave the verdict, when, why |
-| device_id | uuid FK → devices | ESP32 clips |
-| recorded_at | timestamptz | capture time (phone clock, sanity-checked; ESP32 arrival) |
+| device_id | uuid FK → devices | device clips |
+| recorded_at | timestamptz | capture time (phone clock, sanity-checked; device `X-Recorded-At` or arrival) |
 | latitude, longitude | double | GPS fix from the Record page, optional |
 | location_accuracy | real | metres |
 | location_name | text | reverse-geocoded place, e.g. "Seri Iskandar, Perak" |
+| client_id | uuid | recording id chosen by the sending device; unique per `device_id` → retries are idempotent |
+| sha256 | text | hash of the uploaded body, echoed in the receipt |
+| session_id, chunk_index | uuid, int | stream mode; `chunk_index` only on unjoined chunks, unique per session |
 
 ### classifications
 YAMNet classifies per 0.96s window (hop 0.48s) — one row per window per class kept.
@@ -78,9 +82,17 @@ One row per auth user, created by the backend on the user's first request.
 other), `avatar_path` (object in the public `avatars` bucket).
 
 ### devices
-ESP32 registry: `user_id` (owner), `device_name` (unique per owner), `api_key`
-(unique — used to authenticate chunked POST uploads), `last_seen`. No RLS
-policies → service-role (backend) access only.
+Registry of recording clients (ESP32, a script on a laptop, ...): `user_id`
+(owner), `device_name` (unique per owner), `api_key` (unique — authenticates
+`/ingest`), `last_seen`. No RLS policies → service-role (backend) access only.
+
+### ingest_sessions / ingest_chunks
+Stream mode. A session (`id` chosen by the client) starts with its first chunk:
+`device_id`, `user_id`, `join_chunks`, `status` (`open` → `joining` → `closed`),
+`audio_file_id` (the joined recording). Chunks of a `join_chunks` session wait
+in `ingest_chunks` (PK `session_id, chunk_index`; `sha256`, `storage_path`,
+`duration`, `recorded_at`) — outside the Library — until the session closes and
+they are stitched into one `audio_files` row, then deleted. RLS on, no policies.
 
 ## RPCs
 

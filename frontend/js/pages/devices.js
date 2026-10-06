@@ -6,12 +6,12 @@ const ONLINE_WINDOW_MS = 5 * 60 * 1000;
 
 export async function renderDevices(el) {
   el.innerHTML = `
-    ${pageHeader('Devices', 'ESP32 recorders that stream audio to the ingest endpoint using their API key.')}
+    ${pageHeader('Devices', 'Anything that records — an ESP32, or a program on another laptop — can send audio here with its API key.')}
 
     <form id="regForm" class="bg-white rounded-xl2 shadow-card p-4 sm:p-5 mb-4 flex flex-wrap items-end gap-3">
       <div class="flex-1 min-w-[200px]">
         <label class="block text-xs text-ink-muted mb-1.5">Register a new device</label>
-        <input name="device_name" required placeholder="e.g. esp32-farm-02"
+        <input name="device_name" required placeholder="e.g. lab-laptop or esp32-farm-02"
                class="field w-full bg-white border border-line rounded-full px-4 py-3 sm:py-2.5 text-[16px] sm:text-sm transition-shadow">
       </div>
       <button class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-brand text-white text-sm px-5 py-3 sm:py-2.5 rounded-full hover:bg-brand-dark transition-colors">
@@ -22,8 +22,10 @@ export async function renderDevices(el) {
     <div id="newKey"></div>
     <div id="deviceList" class="grid md:grid-cols-2 xl:grid-cols-3 gap-4 mb-5">${spinner()}</div>
 
+    ${howItWorks()}
+
     <div class="bg-white rounded-xl2 shadow-card p-4 sm:p-6">
-      <div class="font-semibold mb-2">Recent ESP32 recordings</div>
+      <div class="font-semibold mb-2">Recent device recordings</div>
       <div id="recordings">${spinner()}</div>
     </div>`;
 
@@ -44,6 +46,31 @@ export async function renderDevices(el) {
   loadRecordings(el);
 }
 
+// The upload contract every client follows, whatever the hardware.
+function howItWorks() {
+  const steps = [
+    ['mic', 'Record', 'A clip, or a ~10 s chunk in stream mode'],
+    ['upload', 'Send', 'POST /ingest with its API key, an id and a SHA-256'],
+    ['check', 'Receipt', 'The server stores it and replies with the hash it got'],
+    ['trash', 'Delete', 'Only when the hashes match — so storage never fills up'],
+  ];
+  return `
+    <div class="bg-white rounded-xl2 shadow-card p-4 sm:p-6 mb-5">
+      <div class="font-semibold mb-1">How a device sends audio</div>
+      <div class="text-xs text-ink-muted mb-4">The same four steps for an ESP32 or a program on a laptop. A failed upload is simply sent again — the server recognises repeats.</div>
+      <ol class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+        ${steps.map(([ic, title, text], i) => `
+          <li class="flex gap-3 items-start bg-page rounded-xl p-3">
+            <span class="w-8 h-8 rounded-full bg-white text-brand grid place-items-center shrink-0">${icon(ic, { size: 15 })}</span>
+            <div class="min-w-0"><div class="text-sm font-medium">${i + 1}. ${title}</div>
+              <div class="text-xs text-ink-secondary">${text}</div></div>
+          </li>`).join('')}
+      </ol>
+      <div class="text-xs text-ink-muted mb-1.5">Try it from any computer with Python (<code>client/sodama_client.py</code> in the repo):</div>
+      <pre class="bg-page border border-line rounded-xl p-3 text-xs overflow-x-auto"><code>python sodama_client.py --server ${esc(location.origin)} --key &lt;API key&gt; mic --chunk 10 --join</code></pre>
+    </div>`;
+}
+
 // The full API key is only ever available right after it is issued.
 function showKey(el, deviceName, apiKey, rotated = false) {
   el.querySelector('#newKey').innerHTML = `
@@ -58,7 +85,7 @@ function showKey(el, deviceName, apiKey, rotated = false) {
           ${icon('copy', { size: 14 })} Copy</button>
       </div>
       <div class="text-ink-secondary mt-2.5">
-        Flash this into the ESP32 firmware as the <code>X-API-Key</code> header value.
+        Put this in the device's firmware or client config — it is sent as the <code>X-API-Key</code> header.
         ${rotated ? 'The previous key stops working immediately.' : ''}
       </div>
     </div>`;
@@ -73,7 +100,7 @@ async function loadDevices(el) {
   const devices = await api('/devices');
   if (!devices.length) {
     list.innerHTML = `<div class="md:col-span-2 xl:col-span-3 bg-white rounded-xl2 shadow-card">
-      ${emptyState('device', 'No devices registered', 'Register your ESP32 above to receive an API key')}</div>`;
+      ${emptyState('device', 'No devices registered', 'Register a device above to receive an API key')}</div>`;
     return;
   }
   list.innerHTML = devices.map((d) => {
@@ -146,9 +173,9 @@ async function loadDevices(el) {
 
 async function loadRecordings(el) {
   const box = el.querySelector('#recordings');
-  const data = await api('/audio?source=esp32&per_page=10');
+  const data = await api('/audio?source=device&per_page=10');
   if (!data.items.length) {
-    box.innerHTML = emptyState('waveform', 'No ESP32 recordings yet',
+    box.innerHTML = emptyState('waveform', 'No device recordings yet',
       'Recordings appear here once a device streams audio to the ingest endpoint');
     return;
   }

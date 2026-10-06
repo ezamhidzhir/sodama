@@ -75,11 +75,11 @@ export const labelSourceBadge = (s) => {
 };
 
 const SOURCE = {
-  esp32:     { cls: 'bg-[#E4EFF6] text-[#22587A] border-[#C2DCEA]', ic: 'device', text: 'ESP32' },
+  device:    { cls: 'bg-[#E4EFF6] text-[#22587A] border-[#C2DCEA]', ic: 'device', text: 'Device' },
   recording: { cls: 'bg-accent-tint text-accent-dark border-accent/30', ic: 'mic', text: 'Recorded' },
   upload:    { cls: 'bg-brand-tint text-brand-dark border-brand/25', ic: 'upload', text: 'Upload' },
 };
-export const SOURCE_LABEL = { esp32: 'ESP32', recording: 'Recorded', upload: 'Upload' };
+export const SOURCE_LABEL = { device: 'Device', recording: 'Recorded', upload: 'Upload' };
 
 export const sourceBadge = (s) => {
   const v = SOURCE[s] ?? SOURCE.upload;

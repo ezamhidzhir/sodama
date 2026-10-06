@@ -130,7 +130,7 @@ function openMoreMenu() {
     <div class="divide-y divide-line/60">
       ${item('#/profile', 'user', 'My profile')}
       ${item('#/upload', 'upload', 'Upload files')}
-      ${item('#/devices', 'device', 'ESP32 devices')}
+      ${item('#/devices', 'device', 'Devices')}
       ${p ? item(`#/u/${encodeURIComponent(p.username)}`, 'globe', 'My public page') : ''}
       ${item('/docs', 'external', 'API documentation', 'target="_blank"')}
     </div>
