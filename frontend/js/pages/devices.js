@@ -8,13 +8,13 @@ export async function renderDevices(el) {
   el.innerHTML = `
     ${pageHeader('Devices', 'ESP32 recorders that stream audio to the ingest endpoint using their API key.')}
 
-    <form id="regForm" class="bg-white rounded-xl2 shadow-card p-5 mb-4 flex flex-wrap items-end gap-3">
-      <div class="flex-1 min-w-[240px]">
+    <form id="regForm" class="bg-white rounded-xl2 shadow-card p-4 sm:p-5 mb-4 flex flex-wrap items-end gap-3">
+      <div class="flex-1 min-w-[200px]">
         <label class="block text-xs text-ink-muted mb-1.5">Register a new device</label>
         <input name="device_name" required placeholder="e.g. esp32-farm-02"
-               class="field w-full bg-white border border-line rounded-full px-4 py-2.5 text-sm transition-shadow">
+               class="field w-full bg-white border border-line rounded-full px-4 py-3 sm:py-2.5 text-[16px] sm:text-sm transition-shadow">
       </div>
-      <button class="inline-flex items-center gap-2 bg-brand text-white text-sm px-5 py-2.5 rounded-full hover:bg-brand-dark transition-colors">
+      <button class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-brand text-white text-sm px-5 py-3 sm:py-2.5 rounded-full hover:bg-brand-dark transition-colors">
         ${icon('plus', { size: 16 })} Register device
       </button>
     </form>
@@ -22,8 +22,8 @@ export async function renderDevices(el) {
     <div id="newKey"></div>
     <div id="deviceList" class="grid md:grid-cols-2 xl:grid-cols-3 gap-4 mb-5">${spinner()}</div>
 
-    <div class="bg-white rounded-xl2 shadow-card p-6">
-      <div class="font-semibold mb-4">Recent ESP32 recordings</div>
+    <div class="bg-white rounded-xl2 shadow-card p-4 sm:p-6">
+      <div class="font-semibold mb-2">Recent ESP32 recordings</div>
       <div id="recordings">${spinner()}</div>
     </div>`;
 
@@ -153,22 +153,15 @@ async function loadRecordings(el) {
     return;
   }
   box.innerHTML = `
-    <div class="overflow-x-auto">
-      <table class="w-full text-sm min-w-[600px]">
-        <thead><tr class="text-left text-xs text-ink-muted border-b border-line">
-          <th class="py-2.5 pr-3 font-medium">File</th><th class="py-2.5 pr-3 font-medium">Top class</th>
-          <th class="py-2.5 pr-3 font-medium">Duration</th><th class="py-2.5 pr-3 font-medium">Status</th>
-          <th class="py-2.5 font-medium">Recorded</th>
-        </tr></thead>
-        <tbody>${data.items.map((f) => `
-          <tr class="border-b border-line/60 last:border-0 hover:bg-page/60 transition-colors">
-            <td class="py-3 pr-3"><a class="text-brand hover:underline font-medium" href="#/audio/${f.id}">${esc(f.filename)}</a></td>
-            <td class="py-3 pr-3">${f.top_class ? esc(f.top_class.class_name) : '<span class="text-ink-muted">—</span>'}</td>
-            <td class="py-3 pr-3 tabular-nums">${fmtDuration(f.duration)}</td>
-            <td class="py-3 pr-3">${statusBadge(f.status)}</td>
-            <td class="py-3 text-ink-secondary whitespace-nowrap">${fmtDate(f.uploaded_at)}</td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
+    <div class="divide-y divide-line/60">
+      ${data.items.map((f) => `
+        <a href="#/audio/${f.id}" class="flex items-center gap-3 py-3 hover:bg-page/60 -mx-2 px-2 rounded-xl">
+          <span class="w-10 h-10 rounded-full bg-page text-brand grid place-items-center shrink-0">${icon('device', { size: 16 })}</span>
+          <div class="min-w-0 flex-1">
+            <div class="font-medium truncate">${esc(f.verified_label || f.top_class?.class_name || 'Not classified yet')}</div>
+            <div class="text-xs text-ink-muted truncate">${esc(f.filename)} · ${fmtDuration(f.duration)} · ${fmtDate(f.recorded_at || f.uploaded_at)}</div>
+          </div>
+          ${statusBadge(f.status)}
+        </a>`).join('')}
     </div>`;
 }

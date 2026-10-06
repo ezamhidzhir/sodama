@@ -11,7 +11,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .routers import audio_files, datasets, devices, ingest, stats, upload
+from .routers import (audio_files, community, datasets, devices, ingest, profile,
+                      recordings, stats, upload)
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
@@ -33,10 +34,12 @@ logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(
     title="Sound Data Management System",
-    version="0.2.0",
+    version="0.3.0",
     description=(
-        "Centralized audio dataset management for ML trainers — upload, "
-        "automatic YAMNet classification, search, dataset curation and export. "
+        "Centralized audio dataset management for ML trainers — record or upload, "
+        "automatic YAMNet classification, labelling, dataset curation, export and "
+        "community sharing. Every endpoint except `/ingest`, `/config` and `/health` "
+        "needs `Authorization: Bearer <Supabase access token>`. "
         "FYP — Muhammad Ezamuddin Bin Hidzhir, Universiti Teknologi PETRONAS."
     ),
 )
@@ -49,8 +52,11 @@ app.add_middleware(
 )
 
 app.include_router(upload.router)
+app.include_router(recordings.router)
 app.include_router(audio_files.router)
 app.include_router(datasets.router)
+app.include_router(community.router)
+app.include_router(profile.router)
 app.include_router(devices.router)
 app.include_router(ingest.router)
 app.include_router(stats.router)

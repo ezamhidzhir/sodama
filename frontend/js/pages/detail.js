@@ -1,5 +1,4 @@
 import { api } from '../api.js';
-import { getUser } from '../auth.js';
 import { icon } from '../icons.js';
 import { CAT } from './dashboard.js';
 import { esc, fmtDuration, fmtDate, statusBadge, sourceBadge, spinner, toast, confBar,
@@ -33,8 +32,10 @@ function reviewPanel(d) {
         ${d.label_source === 'human_corrected' && d.predicted_label
           ? `<div class="text-xs text-ink-muted mt-2">Model had predicted ${pred}</div>` : ''}`}
       <div class="text-xs text-ink-muted mt-2.5">
-        Reviewed by ${esc(d.reviewed_by || 'unknown')} · ${fmtDate(d.reviewed_at)}
+        ${d.label_source === 'human_annotated' ? 'Named while recording' : 'Reviewed'} by ${esc(d.reviewed_by || 'unknown')} · ${fmtDate(d.reviewed_at)}
       </div>
+      ${d.label_source === 'human_annotated' && d.predicted_label ? `
+        <div class="text-xs text-ink-muted mt-1">YAMNet hears it as ${pred}</div>` : ''}
       ${d.review_note ? `<div class="text-sm mt-2 pt-2 border-t border-line/70">${esc(d.review_note)}</div>` : ''}
     </div>` : `
     <div class="rounded-xl2 bg-page p-4 mb-4">
@@ -60,11 +61,12 @@ function reviewPanel(d) {
 
   // Suggestions: every class YAMNet saw in *this* clip, strongest first — those
   // are the plausible alternatives when the top guess is wrong.
-  const seen = [...new Set(d.classifications.map((c) => c.class_name))];
-  const quick = d.top_classes.slice(0, 5).map((c) => c.class_name);
+  const folderClasses = [...new Set((d.datasets || []).flatMap((x) => x.labels || []))];
+  const seen = [...new Set([...folderClasses, ...d.classifications.map((c) => c.class_name)])];
+  const quick = [...new Set([...folderClasses.slice(0, 8), ...d.top_classes.slice(0, 5).map((c) => c.class_name)])];
 
   return `
-    <div class="bg-white rounded-xl2 shadow-card p-6 mb-4" id="reviewPanel">
+    <div class="bg-white rounded-xl2 shadow-card p-4 sm:p-6 mb-4" id="reviewPanel">
       <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div class="flex items-center gap-2.5">
           <span class="w-9 h-9 rounded-full bg-page text-brand grid place-items-center shrink-0">
@@ -122,7 +124,7 @@ function wireReview(el, d, refresh) {
       await api(`/audio/${d.id}/review`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...body, reviewed_by: getUser()?.email ?? null }),
+        body: JSON.stringify(body),
       });
       toast(msg, 'success');
       refresh();
@@ -173,32 +175,35 @@ export async function renderDetail(el, id) {
     if (!byWindow[k] || c.confidence > byWindow[k].confidence) byWindow[k] = c;
   }
   const windows = Object.values(byWindow).sort((a, b) => a.window_start - b.window_start);
+  const { notes, recording_device, ...customMeta } = d.metadata;
 
   el.innerHTML = `
     <a href="#/library" class="inline-flex items-center gap-1.5 text-sm text-ink-secondary hover:text-brand transition-colors mb-3">
       ${icon('arrowLeft', { size: 15 })} Back to Library</a>
 
-    <div class="flex flex-wrap items-start justify-between gap-4 mb-6">
+    <div class="flex flex-wrap items-start justify-between gap-4 mb-5 sm:mb-6">
       <div class="min-w-0">
-        <h1 class="text-[1.6rem] font-bold tracking-tight break-all">${esc(d.filename)}</h1>
+        <h1 class="text-[1.35rem] sm:text-[1.6rem] font-bold tracking-tight break-words">${esc(d.label || d.filename)}</h1>
+        ${d.label ? `<div class="text-sm text-ink-muted break-all mt-0.5">${esc(d.filename)}</div>` : ''}
         <div class="flex flex-wrap items-center gap-2 mt-2.5 text-sm text-ink-secondary">
           ${sourceBadge(d.source)} ${statusBadge(d.status)}
-          <span class="text-ink-muted">${fmtDuration(d.duration)} · ${d.sample_rate} Hz · ${(d.file_size / 1024).toFixed(0)} KB · ${fmtDate(d.uploaded_at)}</span>
+          <span class="text-ink-muted">${fmtDuration(d.duration)} · ${d.sample_rate} Hz · ${(d.file_size / 1024).toFixed(0)} KB</span>
         </div>
       </div>
-      <div class="flex gap-2.5 shrink-0">
-        <a href="${d.download_url}" download="${esc(d.filename)}"
-           class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full border border-line bg-white text-sm text-ink-secondary hover:border-brand hover:text-brand transition-colors">
+      <div class="flex gap-2.5 shrink-0 w-full sm:w-auto">
+        <a href="${d.download_url}" download="${esc(d.filename)}" target="_blank" rel="noopener"
+           class="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-full border border-line bg-white text-sm text-ink-secondary hover:border-brand hover:text-brand transition-colors">
           ${icon('download', { size: 16 })} Download</a>
         <button id="deleteBtn"
-           class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full border border-red-200 bg-white text-red-600 text-sm hover:bg-red-50 transition-colors">
+           class="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-full border border-red-200 bg-white text-red-600 text-sm hover:bg-red-50 transition-colors">
           ${icon('trash', { size: 16 })} Delete</button>
       </div>
     </div>
 
     ${reviewPanel(d)}
+    ${infoCard(d)}
 
-    <div class="bg-white rounded-xl2 shadow-card p-6 mb-4">
+    <div class="bg-white rounded-xl2 shadow-card p-4 sm:p-6 mb-4">
       <div class="flex items-center gap-4 mb-4">
         <button id="playBtn" class="w-12 h-12 rounded-full bg-brand text-white hover:bg-brand-dark transition-colors grid place-items-center shrink-0" aria-label="Play or pause">
           ${icon('play', { size: 18, fill: true })}
@@ -214,7 +219,7 @@ export async function renderDetail(el, id) {
     </div>
 
     <div class="grid lg:grid-cols-3 gap-4">
-      <div class="bg-white rounded-xl2 shadow-card p-6">
+      <div class="bg-white rounded-xl2 shadow-card p-4 sm:p-6">
         <div class="font-semibold mb-1">Top classes</div>
         <div class="text-xs text-ink-muted mb-4">Mean confidence across all windows</div>
         ${d.top_classes.length ? d.top_classes.map((c) => `
@@ -225,15 +230,15 @@ export async function renderDetail(el, id) {
             </div>
             ${confBar(c.mean_confidence)}
           </div>`).join('') : '<div class="text-sm text-ink-muted">Not classified yet.</div>'}
-        ${Object.keys(d.metadata).length ? `
+        ${Object.keys(customMeta).length ? `
           <div class="font-semibold mt-6 mb-2.5">Metadata</div>
-          ${Object.entries(d.metadata).map(([k, v]) => `
+          ${Object.entries(customMeta).map(([k, v]) => `
             <div class="flex justify-between gap-3 text-sm py-2 border-b border-line/60 last:border-0">
               <span class="text-ink-muted">${esc(k)}</span><span class="text-right">${esc(v)}</span>
             </div>`).join('')}` : ''}
       </div>
 
-      <div class="lg:col-span-2 bg-white rounded-xl2 shadow-card p-6">
+      <div class="lg:col-span-2 bg-white rounded-xl2 shadow-card p-4 sm:p-6">
         <div class="font-semibold mb-1">Per-window results</div>
         <div class="text-xs text-ink-muted mb-4">${d.classifications.length} prediction rows logged</div>
         <div class="max-h-96 overflow-y-auto pr-1">
@@ -320,6 +325,40 @@ export async function renderDetail(el, id) {
       location.hash = '#/library';
     } catch (e) { toast(e.message, 'error'); }
   });
+}
+
+// When, where and how the clip was captured, plus the folders it is in.
+function infoCard(d) {
+  const row = (ic, label, value) => value ? `
+    <div class="flex gap-3 py-2.5 border-b border-line/60 last:border-0">
+      <span class="w-8 h-8 rounded-full bg-page text-brand grid place-items-center shrink-0">${icon(ic, { size: 15 })}</span>
+      <div class="min-w-0">
+        <div class="text-xs text-ink-muted">${label}</div>
+        <div class="text-sm break-words">${value}</div>
+      </div>
+    </div>` : '';
+  const hasCoords = d.latitude != null && d.longitude != null;
+  const where = d.location_name || (hasCoords ? `${d.latitude.toFixed(5)}, ${d.longitude.toFixed(5)}` : '');
+  const map = hasCoords
+    ? ` <a class="text-brand hover:underline whitespace-nowrap" target="_blank" rel="noopener"
+          href="https://www.openstreetmap.org/?mlat=${d.latitude}&mlon=${d.longitude}#map=16/${d.latitude}/${d.longitude}">Open map</a>
+        ${d.location_accuracy ? `<span class="text-xs text-ink-muted"> · ±${Math.round(d.location_accuracy)} m</span>` : ''}` : '';
+  const folders = (d.datasets || []).map((x) =>
+    `<a href="#/datasets/${x.id}" class="inline-flex items-center gap-1 text-xs px-2.5 py-1 mr-1 mb-1 rounded-full bg-page border border-line hover:border-brand hover:text-brand">${icon('folder', { size: 12 })}${esc(x.name)}</a>`).join('');
+  const notes = d.metadata?.notes;
+  const device = d.metadata?.recording_device;
+
+  return `
+    <div class="bg-white rounded-xl2 shadow-card p-4 sm:p-6 mb-4">
+      <div class="font-semibold mb-1">Capture details</div>
+      <div class="grid sm:grid-cols-2 gap-x-6">
+        ${row('calendar', d.recorded_at ? 'Recorded' : 'Uploaded', fmtDate(d.recorded_at || d.uploaded_at))}
+        ${row('pin', 'Location', where ? esc(where) + map : '')}
+        ${row('mic', 'Recorded with', esc(device || ''))}
+        ${row('folder', 'Folders', folders || '<span class="text-ink-muted">Not in any folder — add it from the Library</span>')}
+        ${row('pencil', 'Note', esc(notes || ''))}
+      </div>
+    </div>`;
 }
 
 const fmt = (sec) => {

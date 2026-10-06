@@ -85,3 +85,29 @@ Menutup jurang antara aliran kerja dalam proposal (Slide 14) dan sistem sebenar:
 - [x] Datasets: panel eksport dengan bar kesediaan, pilihan (approved sahaja, split, format), dan kiraan langsung "N of M clips will be included"
 - [x] Eksport: `metadata.csv`/`.json` HF-compatible, `train/validation/test.csv`, `README.md` dataset card, lajur teknikal penuh (channels, bit depth, format, saiz, device, metadata tersuai)
 - [x] Diuji: 77 semakan API/eksport + 36 semakan UI (Playwright) lulus; split disahkan 70/15/15 pada 300 klip 4 kelas tak seimbang
+
+### Fasa 5 — Akaun per-pengguna, Rakam & Label, Community, Mobile (26 September 2026)
+
+Empat keperluan baharu: (1) antara muka mesra telefon pintar, (2) rakam bunyi terus dalam sistem dan labelkan di tempat, (3) berkongsi dataset seperti HuggingFace, (4) setiap pengguna ada akaun, profil dan *forgot password* sendiri.
+
+| # | Keputusan | Pilihan | Justifikasi |
+|---|---|---|---|
+| 22 | Pengesahan backend | Setiap endpoint (kecuali `/ingest`, `/config`, `/health`) wajib `Authorization: Bearer <JWT Supabase>`; backend tanya Supabase `GET /auth/v1/user` dan cache 60 s | Menutup had yang diketahui dari Fasa 3b — sebelum ini sesiapa boleh padam data orang lain melalui API. Bertanya Supabase (bukan sahkan tandatangan sendiri) berfungsi untuk kunci HS256 lama dan kunci asimetri baharu tanpa rahsia tambahan. |
+| 23 | Pengasingan data | Backend kekal guna service role, tetapi **setiap** query ditapis `user_id`; fail milik orang lain → 404, bukan 403 | RLS tidak terpakai pada service role, jadi penapis di router ialah kawalan akses sebenar. 404 tidak membocorkan kewujudan fail. `reviewed_by` kini diambil dari token, bukan dihantar klien (menggantikan #21). |
+| 24 | Folder = dataset | Tiada konsep "folder" berasingan; folder rakaman ialah `datasets` dengan senarai kelas (`labels text[]`) | Rakam → folder → eksport/kongsi menjadi satu aliran. Konsep tunggal mengelak dua cara berbeza untuk mengumpul klip yang sama. |
+| 25 | Format rakaman | PCM mentah melalui AudioWorklet → resample 16 kHz dalam browser → WAV. Echo cancellation, noise suppression, AGC **dimatikan** | MediaRecorder menghasilkan webm/opus atau mp4/aac (lossy) yang perlukan ffmpeg di server. Pemprosesan suara telefon memadam bunyi latar dan mengubah kekuatan — betul untuk panggilan, salah untuk data latihan. |
+| 26 | Asal-usul label keempat | `human_annotated` (lajur `label_origin = 'capture'`) | Perakam yang menaip "Honda" tidak *membetulkan* ramalan "Vehicle" YAMNet — dia tidak pernah melihatnya. Melabelkannya `human_corrected` akan menggelembungkan kadar ralat model dalam setiap eksport. |
+| 27 | Ejaan kelas | Label dipadankan tanpa kira huruf besar/kecil dengan kelas sedia ada; kelas baharu ditambah ke folder | "honda", "Honda" dan "HONDA" menjadi tiga kelas berbeza kepada model. |
+| 28 | Lokasi | Geolocation API (dengan kebenaran, boleh dimatikan) + nama tempat melalui OpenStreetMap Nominatim | Metadata lokasi berguna untuk model sedar-lokasi; nama tempat lebih mudah dibaca. Gagal → klip kekal dengan koordinat sahaja. |
+| 29 | Unit perkongsian | **Dataset**, bukan klip tunggal (seperti HuggingFace Hub) | Yang dikongsi ialah data latihan lengkap dengan kelas, penerangan dan lesen — bukan timbunan fail. Muat turun = ZIP HF-compatible yang sama dengan eksport. |
+| 30 | Syarat publish | Wajib penerangan + lesen (CC BY / BY-SA / BY-NC / CC0) + ≥1 klip berlabel tidak ditolak | Dataset awam mesti boleh difahami orang asing dan jelas dari segi hak penggunaan. |
+| 31 | Privasi Community | Emel tidak pernah dipaparkan (guna `@username`); koordinat tepat dibuang dari muat turun awam kecuali pemilik benarkan | Rakaman di rumah mendedahkan alamat. Nama tempat (tahap bandar) kekal. |
+| 32 | Profil | Jadual `profiles` dicipta secara *lazy* oleh backend pada permintaan pertama | Tiada trigger pada skema `auth`; akaun lama automatik dapat profil. |
+| 33 | Forgot password | Supabase `/auth/v1/recover` → pautan emel → `#/reset` guna sesi pemulihan | Aliran standard Supabase. **Perlu:** URL aplikasi dalam *Redirect URLs*, dan SMTP sendiri untuk pengguna sebenar (SMTP terbina dalam hanya menghantar kepada ahli pasukan projek, dengan had kadar yang rendah). |
+| 34 | Mobile | Bar tab bawah (Home, Library, **Record** di tengah, Datasets, Community) + menu; kad menggantikan jadual pada skrin kecil; input 16 px (elak zum iOS); PWA manifest | Kebanyakan pengguna guna telefon; butang Record di tempat ibu jari berehat. |
+| 35 | Data sedia ada | Baris tanpa pemilik diserahkan kepada akaun `ezamhidzhir09@gmail.com` dalam migration 8 | Data demo lama kekal kelihatan kepada pemilik projek, tidak terdedah kepada pengguna lain. |
+
+- [x] Migration 8: `profiles`, `dataset_likes`, lajur rakaman (`recorded_at`, `latitude`, `longitude`, `location_accuracy`, `location_name`, `label_origin`), `datasets` (`labels`, `visibility`, `license`, `share_location`, `published_at`, `download_count`), `devices.user_id`, bucket `avatars`, RPC `dashboard_stats(p_user)` dan `community_datasets()`
+- [x] `backend/app/auth.py` (JWT + profil), `clips.py` (satu laluan simpan untuk upload/ESP32/rakaman)
+- [x] Router baharu: `recordings`, `community`, `profile`; semua router lama diskop per pengguna
+- [x] Frontend: halaman Record, Community (senarai, dataset, pengguna), Profile, Forgot/Reset password; Datasets menjadi halaman per-folder dengan imbangan kelas dan panel kongsi; shell mobile

@@ -9,7 +9,25 @@ WAVEFORM_POINTS = 600  # peaks stored for dashboard waveform rendering
 
 
 def decode_to_standard(data: bytes) -> np.ndarray:
-    """Decode WAV/MP3/FLAC/OGG bytes to 16kHz mono float32 in [-1, 1]."""
+    """Decode WAV/MP3/FLAC/OGG bytes to 16kHz mono float32 in [-1, 1].
+
+    Recordings made in the app already arrive as 16 kHz mono WAV, so those are
+    read directly with soundfile — librosa's first import alone takes seconds,
+    which a person holding a phone feels as a hung "Saving…". librosa is only
+    loaded when there is real work: resampling, downmixing, or MP3/OGG decode.
+    """
+    try:
+        waveform, rate = sf.read(io.BytesIO(data), dtype="float32", always_2d=True)
+    except Exception:
+        waveform, rate = None, None
+    if waveform is not None:
+        mono = waveform.mean(axis=1) if waveform.shape[1] > 1 else waveform[:, 0]
+        if rate == SAMPLE_RATE:
+            return np.ascontiguousarray(mono, dtype=np.float32)
+        import librosa
+
+        return librosa.resample(mono, orig_sr=rate, target_sr=SAMPLE_RATE).astype(np.float32)
+
     import librosa
 
     waveform, _ = librosa.load(io.BytesIO(data), sr=SAMPLE_RATE, mono=True)

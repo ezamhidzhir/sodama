@@ -16,6 +16,9 @@ from collections import defaultdict
 CHUNK = 200  # keep the PostgREST `in.(...)` filter inside URL length limits
 
 
+LABEL_SOURCES = ("human_annotated", "human_confirmed", "human_corrected", "auto")
+
+
 def predicted_labels(client, audio_ids: list[str]) -> dict[str, tuple[str, float]]:
     """Map audio_file_id -> (top class by mean confidence, that mean).
 
@@ -48,12 +51,33 @@ def final_label(row: dict, predicted: tuple[str, float] | None) -> tuple[str | N
     human case so a reader can tell a rubber-stamped prediction from a real
     correction:
 
-      human_corrected — a person typed a different label
-      human_confirmed — a person agreed with YAMNet
+      human_annotated — the recordist named the sound while recording it
+      human_corrected — a reviewer typed a different label
+      human_confirmed — a reviewer agreed with YAMNet
       auto            — nobody has looked at it yet
+
+    `human_annotated` is kept apart from `human_corrected` on purpose: a person
+    who recorded a Honda and typed "Honda" did not *correct* YAMNet's "Vehicle"
+    — they never saw it. Calling that a correction would inflate the apparent
+    error rate of the model in every export.
     """
     pred_name = predicted[0] if predicted else None
     verified = row.get("verified_label")
     if not verified:
         return pred_name, "auto"
+    if row.get("label_origin") == "capture":
+        return verified, "human_annotated"
     return verified, "human_confirmed" if verified == pred_name else "human_corrected"
+
+
+def canonical_label(label: str, known: list[str]) -> str:
+    """Reuse the existing spelling of a class if one matches case-insensitively.
+
+    "honda", "Honda " and "HONDA" must not become three classes in a training
+    set — a model would learn them as three different sounds.
+    """
+    clean = " ".join(label.split())
+    for k in known:
+        if k.casefold() == clean.casefold():
+            return k
+    return clean

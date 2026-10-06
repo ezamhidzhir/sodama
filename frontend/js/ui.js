@@ -63,6 +63,7 @@ export const reviewBadge = (s) => {
 // Where a label came from. `auto` is deliberately the loudest: an unverified
 // YAMNet guess is the one thing a trainer must not mistake for ground truth.
 const LABEL_SOURCE = {
+  human_annotated: { cls: 'bg-brand-tint text-brand-dark border-brand/25', text: 'Labelled when recorded' },
   human_confirmed: { cls: 'bg-brand-tint text-brand-dark border-brand/25', text: 'Confirmed by reviewer' },
   human_corrected: { cls: 'bg-brand-tint text-brand-dark border-brand/25', text: 'Corrected by reviewer' },
   auto:            { cls: 'bg-[#FBF3E0] text-[#8A6208] border-[#EBD9AE]', text: 'Unverified auto-label' },
@@ -73,9 +74,17 @@ export const labelSourceBadge = (s) => {
   return `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border ${v.cls}">${v.text}</span>`;
 };
 
-export const sourceBadge = (s) => s === 'esp32'
-  ? `<span class="inline-flex items-center gap-1.5 pl-2 pr-2.5 py-1 rounded-full text-xs bg-[#E4EFF6] text-[#22587A] border border-[#C2DCEA]">${icon('device', { size: 13 })}ESP32</span>`
-  : `<span class="inline-flex items-center gap-1.5 pl-2 pr-2.5 py-1 rounded-full text-xs bg-brand-tint text-brand-dark border border-brand/25">${icon('upload', { size: 13 })}Upload</span>`;
+const SOURCE = {
+  esp32:     { cls: 'bg-[#E4EFF6] text-[#22587A] border-[#C2DCEA]', ic: 'device', text: 'ESP32' },
+  recording: { cls: 'bg-accent-tint text-accent-dark border-accent/30', ic: 'mic', text: 'Recorded' },
+  upload:    { cls: 'bg-brand-tint text-brand-dark border-brand/25', ic: 'upload', text: 'Upload' },
+};
+export const SOURCE_LABEL = { esp32: 'ESP32', recording: 'Recorded', upload: 'Upload' };
+
+export const sourceBadge = (s) => {
+  const v = SOURCE[s] ?? SOURCE.upload;
+  return `<span class="inline-flex items-center gap-1.5 pl-2 pr-2.5 py-1 rounded-full text-xs border whitespace-nowrap ${v.cls}">${icon(v.ic, { size: 13 })}${v.text}</span>`;
+};
 
 export const confBar = (c) => `
   <div class="flex items-center gap-2.5 min-w-[96px]">
@@ -104,12 +113,12 @@ export const emptyState = (iconName, title, hint) => `
 
 // Page heading used across every screen.
 export const pageHeader = (title, subtitle, actions = '') => `
-  <div class="flex flex-wrap items-end justify-between gap-4 mb-6">
-    <div>
-      <h1 class="text-[1.6rem] font-bold tracking-tight">${esc(title)}</h1>
+  <div class="flex flex-wrap items-end justify-between gap-3 sm:gap-4 mb-5 sm:mb-6">
+    <div class="min-w-0">
+      <h1 class="text-[1.35rem] sm:text-[1.6rem] font-bold tracking-tight">${esc(title)}</h1>
       ${subtitle ? `<p class="text-sm text-ink-muted mt-1">${subtitle}</p>` : ''}
     </div>
-    ${actions ? `<div class="flex gap-2.5">${actions}</div>` : ''}
+    ${actions ? `<div class="flex flex-wrap gap-2.5">${actions}</div>` : ''}
   </div>`;
 
 export const btnPrimary = (label, iconName, attrs = '') =>
@@ -132,7 +141,7 @@ export function toast(msg, type = 'info') {
   };
   const icons = { info: 'leaf', success: 'check', error: 'alert' };
   const el = document.createElement('div');
-  el.className = `${styles[type]} pl-4 pr-5 py-3 rounded-full shadow-lift text-sm fade-in max-w-sm flex items-center gap-2.5`;
+  el.className = `${styles[type]} pl-4 pr-5 py-3 rounded-full shadow-lift text-sm fade-in max-w-sm flex items-center gap-2.5 pointer-events-auto`;
   el.innerHTML = `${icon(icons[type], { size: 16 })}<span></span>`;
   el.querySelector('span').textContent = msg;
   document.getElementById('toasts').appendChild(el);
@@ -163,4 +172,79 @@ export const currentlyPlaying = () => playingId;
 export function stopAudio() {
   if (sharedAudio) sharedAudio.pause();
   playingId = null;
+}
+
+// ------------------------------------------------------------------ people
+
+const initials = (name) => (name || '?').split(/[\s_.]+/).filter(Boolean).slice(0, 2)
+  .map((w) => w[0].toUpperCase()).join('');
+
+// Round avatar: the uploaded picture, or initials on the brand tint.
+export const avatar = (p, size = 36) => {
+  const style = `width:${size}px;height:${size}px;font-size:${Math.round(size * 0.38)}px`;
+  return p?.avatar_url
+    ? `<img src="${esc(p.avatar_url)}" alt="" style="${style}" class="rounded-full object-cover shrink-0 bg-page">`
+    : `<span style="${style}" class="rounded-full bg-accent-tint text-accent-dark font-semibold grid place-items-center shrink-0">${esc(initials(p?.full_name || p?.username))}</span>`;
+};
+
+export const ROLES = {
+  student: 'Student', researcher: 'Researcher', lecturer: 'Lecturer',
+  industry: 'Industry engineer', hobbyist: 'Hobbyist', other: 'Other',
+};
+
+export const LICENSES = {
+  'CC-BY-4.0': { name: 'CC BY 4.0', hint: 'Anyone may use it, even commercially, if they credit you' },
+  'CC-BY-SA-4.0': { name: 'CC BY-SA 4.0', hint: 'Use with credit; derived datasets must share alike' },
+  'CC-BY-NC-4.0': { name: 'CC BY-NC 4.0', hint: 'Use with credit, non-commercial only' },
+  'CC0-1.0': { name: 'CC0 (public domain)', hint: 'No conditions at all' },
+};
+
+// ------------------------------------------------------------------ bottom sheet
+
+// A modal that slides up from the bottom on phones and centres on desktop.
+// `body` is HTML; returns { el, close }. Clicking the backdrop or Escape closes.
+export function sheet(title, body, { onClose } = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'fixed inset-0 z-[60] flex items-end sm:items-center justify-center';
+  wrap.innerHTML = `
+    <div class="absolute inset-0 bg-ink/40 fade-in" data-close></div>
+    <div role="dialog" aria-modal="true" aria-label="${esc(title)}"
+         class="relative bg-white w-full sm:max-w-lg rounded-t-xl3 sm:rounded-xl3 shadow-lift max-h-[92vh] overflow-y-auto sheet-in"
+         style="padding-bottom:max(1.25rem, env(safe-area-inset-bottom))">
+      <div class="sticky top-0 bg-white z-10 flex items-center justify-between gap-3 px-5 pt-4 pb-3 border-b border-line/60">
+        <span class="sm:hidden absolute left-1/2 -translate-x-1/2 top-1.5 w-10 h-1 rounded-full bg-line"></span>
+        <div class="font-semibold text-lg">${esc(title)}</div>
+        <button data-close class="w-10 h-10 -mr-2 rounded-full grid place-items-center text-ink-muted hover:bg-page" aria-label="Close">${icon('close', { size: 18 })}</button>
+      </div>
+      <div class="px-5 pt-4">${body}</div>
+    </div>`;
+  const close = () => {
+    wrap.remove();
+    document.removeEventListener('keydown', onKey);
+    document.body.classList.remove('overflow-hidden');
+    onClose?.();
+  };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  wrap.querySelectorAll('[data-close]').forEach((n) => n.addEventListener('click', close));
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(wrap);
+  document.body.classList.add('overflow-hidden');
+  wrap.querySelector('input, textarea, select')?.focus({ preventScroll: true });
+  return { el: wrap, close };
+}
+
+export const INPUT = 'field w-full bg-white border border-line rounded-full px-4 py-3 sm:py-2.5 text-[16px] sm:text-sm transition-shadow';
+export const TEXTAREA = 'field w-full bg-white border border-line rounded-2xl px-4 py-3 sm:py-2.5 text-[16px] sm:text-sm transition-shadow';
+
+// ------------------------------------------------------------------ leave guard
+
+// A page holding unsaved work (a recording) registers a guard; the router asks
+// it before navigating away. Returning false keeps the user on the page.
+let leaveGuard = null;
+export const setLeaveGuard = (fn) => { leaveGuard = fn; };
+export function canLeave() {
+  if (leaveGuard && !leaveGuard()) return false;
+  leaveGuard = null;
+  window.onbeforeunload = null;
+  return true;
 }

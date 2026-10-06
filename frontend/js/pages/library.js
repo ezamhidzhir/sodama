@@ -1,49 +1,59 @@
 import { api, qs } from '../api.js';
-import { getUser } from '../auth.js';
 import { icon } from '../icons.js';
-import { esc, fmtDuration, fmtDate, statusBadge, sourceBadge, reviewBadge, spinner, emptyState, toast, playAudio, currentlyPlaying, pageHeader, linkPrimary } from '../ui.js';
+import { esc, fmtDuration, fmtDate, statusBadge, sourceBadge, reviewBadge, spinner, emptyState, toast,
+         playAudio, currentlyPlaying, pageHeader, INPUT } from '../ui.js';
 
 // `review` is kept out of `filters` because the filter form is rebuilt wholesale
 // on submit, which would wipe a tab chosen above it.
-const state = { page: 1, per_page: 15, filters: {}, review: '' };
-const INPUT = 'field w-full bg-white border border-line rounded-full px-4 py-2.5 text-sm transition-shadow';
+const state = { page: 1, per_page: 15, filters: {}, review: '', showFilters: false };
 
 const TABS = [
-  { key: '', label: 'All files' },
+  { key: '', label: 'All' },
   { key: 'unreviewed', label: 'Needs review' },
   { key: 'approved', label: 'Approved' },
   { key: 'rejected', label: 'Rejected' },
 ];
 
+const TAB_ON = 'bg-brand text-white border-brand';
+const TAB_OFF = 'bg-white border-line text-ink-secondary hover:border-brand hover:text-brand';
+
 export async function renderLibrary(el) {
   el.innerHTML = `
     ${pageHeader('Library', 'Search your collection, then confirm or correct each label.',
-      linkPrimary('Upload audio', 'upload', '#/upload'))}
+      `<a href="#/record" class="hidden sm:inline-flex items-center gap-2 bg-brand text-white text-sm px-5 py-2.5 rounded-full hover:bg-brand-dark transition-colors">${icon('mic', { size: 16 })} Record</a>
+       <a href="#/upload" class="hidden sm:inline-flex items-center gap-2 bg-white border border-line text-ink-secondary text-sm px-5 py-2.5 rounded-full hover:border-brand hover:text-brand transition-colors">${icon('upload', { size: 16 })} Upload</a>`)}
 
-    <div class="flex flex-wrap gap-2 mb-4" id="reviewTabs">
-      ${TABS.map((t) => `
-        <button data-review="${t.key}"
-                class="tab inline-flex items-center gap-2 px-4 py-2 rounded-full border text-sm transition-colors
-                       ${t.key === state.review ? 'bg-brand text-white border-brand' : 'bg-white border-line text-ink-secondary hover:border-brand hover:text-brand'}">
-          ${esc(t.label)}<span class="tabCount text-xs opacity-70 tabular-nums" data-review="${t.key}"></span>
-        </button>`).join('')}
-    </div>
+    <form id="searchForm" class="flex gap-2 mb-3">
+      <div class="relative flex-1">
+        <span class="absolute left-4 top-1/2 -translate-y-1/2 text-ink-muted pointer-events-none">${icon('search', { size: 17 })}</span>
+        <input name="q" type="search" enterkeyhint="search" placeholder="Search label, file name or place"
+               value="${esc(state.filters.q || '')}" class="${INPUT} pl-11">
+      </div>
+      <button type="button" id="filterToggle" class="shrink-0 inline-flex items-center gap-1.5 px-4 rounded-full border text-sm transition-colors
+              ${state.showFilters ? TAB_ON : TAB_OFF}" aria-expanded="${state.showFilters}">
+        ${icon('filter', { size: 16 })}<span class="hidden sm:inline">Filters</span><span id="filterCount" class="text-xs"></span></button>
+    </form>
 
-    <form id="filters" class="bg-white rounded-xl2 shadow-card p-5 mb-4">
+    <form id="filters" class="${state.showFilters ? '' : 'hidden'} bg-white rounded-xl2 shadow-card p-4 sm:p-5 mb-3">
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div class="col-span-2">
-          <label class="block text-xs text-ink-muted mb-1.5">Class</label>
-          <input name="class_name" list="classList" placeholder="e.g. Speech" class="${INPUT}">
+          <label class="block text-xs text-ink-muted mb-1.5">Folder</label>
+          <select name="dataset_id" id="folderFilter" class="${INPUT}"><option value="">All folders</option></select>
+        </div>
+        <div class="col-span-2">
+          <label class="block text-xs text-ink-muted mb-1.5">YAMNet class</label>
+          <input name="class_name" list="classList" placeholder="e.g. Vehicle" class="${INPUT}">
           <datalist id="classList"></datalist>
         </div>
         <div>
           <label class="block text-xs text-ink-muted mb-1.5">Min confidence</label>
-          <input name="min_confidence" type="number" min="0" max="1" step="0.05" placeholder="0.50" class="${INPUT}">
+          <input name="min_confidence" type="number" inputmode="decimal" min="0" max="1" step="0.05" placeholder="0.50" class="${INPUT}">
         </div>
         <div>
           <label class="block text-xs text-ink-muted mb-1.5">Source</label>
           <select name="source" class="${INPUT}">
-            <option value="">All sources</option><option value="upload">Upload</option><option value="esp32">ESP32</option>
+            <option value="">All sources</option><option value="recording">Recorded</option>
+            <option value="upload">Upload</option><option value="esp32">ESP32</option>
           </select>
         </div>
         <div>
@@ -62,51 +72,61 @@ export async function renderLibrary(el) {
         </button>
         <button type="submit"
                 class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-brand text-white text-sm hover:bg-brand-dark transition-colors">
-          ${icon('search', { size: 16 })} Apply filters
+          ${icon('search', { size: 16 })} Apply
         </button>
       </div>
     </form>
 
-    <div id="bulkbar" class="hidden flex-wrap items-center gap-3 bg-brand-tint border border-brand/25 rounded-2xl px-5 py-3 mb-4 text-sm">
-      <span id="selCount" class="font-medium"></span>
+    <div class="flex gap-2 mb-4 overflow-x-auto no-scrollbar -mx-3 px-3 sm:mx-0 sm:px-0" id="reviewTabs">
+      ${TABS.map((t) => `
+        <button data-review="${t.key}"
+                class="tab shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-full border text-sm transition-colors
+                       ${t.key === state.review ? TAB_ON : TAB_OFF}">
+          ${esc(t.label)}<span class="tabCount text-xs opacity-70 tabular-nums" data-review="${t.key}"></span>
+        </button>`).join('')}
+    </div>
+
+    <div id="bulkbar" class="hidden fixed lg:static inset-x-3 bottom-[5.5rem] z-30 flex-wrap items-center gap-2 bg-brand-tint border border-brand/25 rounded-2xl px-4 py-3 mb-4 text-sm shadow-lift lg:shadow-none">
+      <span id="selCount" class="font-medium w-full sm:w-auto"></span>
       <button id="approveSel" class="inline-flex items-center gap-1.5 bg-brand text-white px-4 py-2 rounded-full hover:bg-brand-dark transition-colors"
-              title="Accept each file's own predicted label">
-        ${icon('check', { size: 15 })} Approve labels
-      </button>
-      <span class="w-px h-6 bg-brand/25"></span>
-      <select id="dsSelect" class="field bg-white border border-line rounded-full px-4 py-2 text-sm"></select>
-      <button id="addToDs" class="inline-flex items-center gap-1.5 bg-white border border-line px-4 py-2 rounded-full hover:border-brand hover:text-brand transition-colors">
-        ${icon('plus', { size: 15 })} Add to dataset
-      </button>
-      <button id="deleteSel" class="inline-flex items-center gap-1.5 bg-white border border-red-200 text-red-600 px-4 py-2 rounded-full hover:bg-red-50 transition-colors ml-auto">
-        ${icon('trash', { size: 15 })} Delete selected
-      </button>
+              title="Accept each file's own label">
+        ${icon('check', { size: 15 })} Approve</button>
+      <select id="dsSelect" class="field bg-white border border-line rounded-full px-3 py-2 text-sm max-w-[10rem]"></select>
+      <button id="addToDs" class="inline-flex items-center gap-1.5 bg-white border border-line px-3.5 py-2 rounded-full hover:border-brand hover:text-brand transition-colors">
+        ${icon('plus', { size: 15 })} Add</button>
+      <button id="deleteSel" class="inline-flex items-center gap-1.5 bg-white border border-red-200 text-red-600 px-3.5 py-2 rounded-full hover:bg-red-50 transition-colors sm:ml-auto" aria-label="Delete selected">
+        ${icon('trash', { size: 15 })}<span class="hidden sm:inline">Delete</span></button>
     </div>
 
     <div id="results"></div>`;
 
   const form = el.querySelector('#filters');
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    state.filters = Object.fromEntries(new FormData(form));
+  const search = el.querySelector('#searchForm');
+  const readFilters = () => {
+    state.filters = { ...Object.fromEntries(new FormData(form)), q: search.elements.q.value.trim() };
     state.page = 1;
+    paintFilterCount(el);
     loadResults(el);
+  };
+  form.addEventListener('submit', (e) => { e.preventDefault(); readFilters(); });
+  search.addEventListener('submit', (e) => { e.preventDefault(); search.elements.q.blur(); readFilters(); });
+  search.elements.q.addEventListener('search', readFilters);   // the × in a search field
+  el.querySelector('#filterToggle').addEventListener('click', (e) => {
+    state.showFilters = !state.showFilters;
+    form.classList.toggle('hidden', !state.showFilters);
+    e.currentTarget.className = e.currentTarget.className.replace(state.showFilters ? TAB_OFF : TAB_ON, state.showFilters ? TAB_ON : TAB_OFF);
   });
   el.querySelector('#clearBtn').addEventListener('click', () => {
-    form.reset(); state.filters = {}; state.page = 1; loadResults(el);
+    form.reset(); search.reset(); state.filters = {}; state.page = 1;
+    paintFilterCount(el); loadResults(el);
   });
-
-  // restore previous filters when navigating back from detail
-  Object.entries(state.filters).forEach(([k, v]) => { if (form.elements[k]) form.elements[k].value = v; });
 
   el.querySelectorAll('#reviewTabs .tab').forEach((b) => b.addEventListener('click', () => {
     state.review = b.dataset.review;
     state.page = 1;
     el.querySelectorAll('#reviewTabs .tab').forEach((o) => {
       const on = o.dataset.review === state.review;
-      o.className = o.className
-        .replace(/bg-brand text-white border-brand|bg-white border-line text-ink-secondary hover:border-brand hover:text-brand/,
-                 on ? 'bg-brand text-white border-brand' : 'bg-white border-line text-ink-secondary hover:border-brand hover:text-brand');
+      o.className = o.className.replace(on ? TAB_OFF : TAB_ON, on ? TAB_ON : TAB_OFF);
     });
     loadResults(el);
   }));
@@ -116,8 +136,24 @@ export async function renderLibrary(el) {
       s.class_distribution.map((c) => `<option value="${esc(c.class_name)}">`).join('');
   }).catch(() => {});
 
+  const datasets = await api('/datasets').catch(() => []);
+  el.querySelector('#folderFilter').innerHTML = '<option value="">All folders</option>'
+    + datasets.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+  el.querySelector('#dsSelect').innerHTML = datasets.length
+    ? datasets.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')
+    : '<option value="">No folders yet</option>';
+
+  // restore previous filters when navigating back from detail
+  Object.entries(state.filters).forEach(([k, v]) => { if (form.elements[k]) form.elements[k].value = v; });
+  paintFilterCount(el);
+
   refreshCounts(el);
   loadResults(el);
+}
+
+function paintFilterCount(el) {
+  const n = Object.entries(state.filters).filter(([k, v]) => k !== 'q' && v).length;
+  el.querySelector('#filterCount').textContent = n ? `(${n})` : '';
 }
 
 // Tab counts come from the dashboard aggregate — one round-trip for all four.
@@ -131,6 +167,16 @@ function refreshCounts(el) {
     });
   }).catch(() => {});
 }
+
+const labelCell = (f) => (f.verified_label
+  ? esc(f.verified_label)
+  : f.top_class
+    ? `${esc(f.top_class.class_name)} <span class="text-xs text-ink-muted tabular-nums">${(f.top_class.confidence * 100).toFixed(0)}%</span>`
+    : '<span class="text-ink-muted">—</span>');
+
+const playBtn = (f, size = 'w-9 h-9') => `
+  <button class="playBtn ${size} rounded-full bg-page text-brand hover:bg-brand hover:text-white transition-colors grid place-items-center shrink-0"
+          data-id="${f.id}" title="Play or pause" aria-label="Play ${esc(f.filename)}">${icon('play', { size: 14, fill: true })}</button>`;
 
 async function loadResults(el) {
   const results = el.querySelector('#results');
@@ -146,8 +192,8 @@ async function loadResults(el) {
   if (!data.items.length) {
     const hint = state.review === 'unreviewed' ? 'Every file has been reviewed — nothing left in the queue'
       : state.review ? 'No files in this review state yet'
-      : Object.values(state.filters).some(Boolean) ? 'Try loosening the filters'
-      : 'Upload some audio to get started';
+      : Object.values(state.filters).some(Boolean) ? 'Try loosening the search or filters'
+      : 'Record a sound or upload audio to get started';
     results.innerHTML = `<div class="bg-white rounded-xl2 shadow-card">${emptyState(
       state.review === 'unreviewed' ? 'checkCircle' : 'search', 'No audio found', hint)}</div>`;
     return;
@@ -155,39 +201,63 @@ async function loadResults(el) {
 
   const pages = Math.max(1, Math.ceil(data.total / state.per_page));
   results.innerHTML = `
-    <div class="bg-white rounded-xl2 shadow-card overflow-hidden">
+    <!-- phone: cards -->
+    <div class="md:hidden">
+      <label class="flex items-center gap-2 text-xs text-ink-muted mb-2 px-1">
+        <input type="checkbox" class="selAll accent-[#4C7438] w-4 h-4"> Select all on this page</label>
+      <div class="space-y-2.5">${data.items.map((f) => `
+        <div class="bg-white rounded-xl2 shadow-card p-3.5 flex gap-3">
+          <div class="flex flex-col items-center gap-2.5">
+            ${playBtn(f, 'w-11 h-11')}
+            <input type="checkbox" class="rowSel accent-[#4C7438] w-5 h-5" value="${f.id}" aria-label="Select ${esc(f.filename)}">
+          </div>
+          <a href="#/audio/${f.id}" class="min-w-0 flex-1">
+            <div class="flex items-start justify-between gap-2">
+              <div class="font-semibold truncate">${labelCell(f)}</div>
+              ${reviewBadge(f.review_status)}
+            </div>
+            <div class="text-xs text-ink-muted truncate mt-0.5">${esc(f.filename)}</div>
+            <div class="flex flex-wrap items-center gap-1.5 mt-2 text-xs text-ink-secondary">
+              ${sourceBadge(f.source)}
+              ${f.status !== 'done' ? statusBadge(f.status) : ''}
+              <span class="tabular-nums">${fmtDuration(f.duration)}</span>
+              <span class="text-ink-muted">·</span>
+              <span>${fmtDate(f.recorded_at || f.uploaded_at)}</span>
+            </div>
+            ${f.location_name ? `<div class="text-xs text-ink-muted mt-1 flex items-center gap-1 truncate">${icon('pin', { size: 12 })}${esc(f.location_name)}</div>` : ''}
+          </a>
+        </div>`).join('')}
+      </div>
+    </div>
+
+    <!-- tablet / desktop: table -->
+    <div class="hidden md:block bg-white rounded-xl2 shadow-card overflow-hidden">
       <div class="overflow-x-auto">
-        <table class="w-full text-sm min-w-[860px]">
+        <table class="w-full text-sm">
           <thead><tr class="text-left text-xs text-ink-muted border-b border-line bg-page/50">
-            <th class="p-4 w-8"><input type="checkbox" id="selAll" class="accent-[#4C7438] w-4 h-4"></th>
+            <th class="p-4 w-8"><input type="checkbox" class="selAll accent-[#4C7438] w-4 h-4" aria-label="Select all"></th>
             <th class="p-4 w-10"></th>
-            <th class="p-4 font-medium">File</th>
             <th class="p-4 font-medium">Label</th>
             <th class="p-4 font-medium">Review</th>
             <th class="p-4 font-medium">Duration</th>
             <th class="p-4 font-medium">Source</th>
-            <th class="p-4 font-medium">Status</th>
-            <th class="p-4 font-medium">Uploaded</th>
+            <th class="p-4 font-medium hidden xl:table-cell">Status</th>
+            <th class="p-4 font-medium">Recorded</th>
             <th class="p-4 w-12"></th>
           </tr></thead>
           <tbody>${data.items.map((f) => `
             <tr class="border-b border-line/60 last:border-0 hover:bg-page/60 transition-colors">
               <td class="p-4"><input type="checkbox" class="rowSel accent-[#4C7438] w-4 h-4" value="${f.id}"></td>
-              <td class="p-4">
-                <button class="playBtn w-9 h-9 rounded-full bg-page text-brand hover:bg-brand hover:text-white transition-colors grid place-items-center"
-                        data-id="${f.id}" title="Play or pause" aria-label="Play ${esc(f.filename)}">${icon('play', { size: 14, fill: true })}</button>
+              <td class="p-4">${playBtn(f)}</td>
+              <td class="p-4 max-w-[18rem]">
+                <a class="text-brand hover:underline font-medium" href="#/audio/${f.id}">${labelCell(f)}</a>
+                <div class="text-xs text-ink-muted truncate">${esc(f.filename)}${f.location_name ? ` · ${esc(f.location_name)}` : ''}</div>
               </td>
-              <td class="p-4"><a class="text-brand hover:underline font-medium" href="#/audio/${f.id}">${esc(f.filename)}</a></td>
-              <td class="p-4">${f.verified_label
-                ? esc(f.verified_label)
-                : f.top_class
-                  ? `${esc(f.top_class.class_name)} <span class="text-xs text-ink-muted tabular-nums">${(f.top_class.confidence * 100).toFixed(0)}%</span>`
-                  : '<span class="text-ink-muted">—</span>'}</td>
               <td class="p-4">${reviewBadge(f.review_status)}</td>
               <td class="p-4 tabular-nums">${fmtDuration(f.duration)}</td>
               <td class="p-4">${sourceBadge(f.source)}</td>
-              <td class="p-4">${statusBadge(f.status)}</td>
-              <td class="p-4 text-ink-secondary whitespace-nowrap">${fmtDate(f.uploaded_at)}</td>
+              <td class="p-4 hidden xl:table-cell">${statusBadge(f.status)}</td>
+              <td class="p-4 text-ink-secondary whitespace-nowrap">${fmtDate(f.recorded_at || f.uploaded_at)}</td>
               <td class="p-4">
                 <button class="delBtn w-8 h-8 rounded-full text-ink-muted hover:bg-red-50 hover:text-red-600 transition-colors grid place-items-center"
                         data-id="${f.id}" data-name="${esc(f.filename)}" title="Delete this file" aria-label="Delete ${esc(f.filename)}">
@@ -199,18 +269,18 @@ async function loadResults(el) {
         </table>
       </div>
     </div>
-    <div class="flex items-center justify-between mt-4 text-sm text-ink-secondary">
-      <div>${data.total} file${data.total === 1 ? '' : 's'} · page ${state.page} of ${pages}</div>
+    <div class="flex items-center justify-between gap-3 mt-4 text-sm text-ink-secondary">
+      <div>${data.total} file${data.total === 1 ? '' : 's'} · ${state.page}/${pages}</div>
       <div class="flex gap-2">
-        <button id="prevBtn" class="inline-flex items-center gap-1 px-4 py-2 rounded-full border border-line bg-white disabled:opacity-40 hover:border-brand hover:text-brand transition-colors" ${state.page <= 1 ? 'disabled' : ''}>
-          ${icon('chevronLeft', { size: 15 })} Previous</button>
-        <button id="nextBtn" class="inline-flex items-center gap-1 px-4 py-2 rounded-full border border-line bg-white disabled:opacity-40 hover:border-brand hover:text-brand transition-colors" ${state.page >= pages ? 'disabled' : ''}>
-          Next ${icon('chevronRight', { size: 15 })}</button>
+        <button id="prevBtn" class="inline-flex items-center gap-1 px-4 py-2.5 rounded-full border border-line bg-white disabled:opacity-40 hover:border-brand hover:text-brand transition-colors" ${state.page <= 1 ? 'disabled' : ''} aria-label="Previous page">
+          ${icon('chevronLeft', { size: 15 })}<span class="hidden sm:inline">Previous</span></button>
+        <button id="nextBtn" class="inline-flex items-center gap-1 px-4 py-2.5 rounded-full border border-line bg-white disabled:opacity-40 hover:border-brand hover:text-brand transition-colors" ${state.page >= pages ? 'disabled' : ''} aria-label="Next page">
+          <span class="hidden sm:inline">Next</span>${icon('chevronRight', { size: 15 })}</button>
       </div>
     </div>`;
 
-  results.querySelector('#prevBtn').addEventListener('click', () => { state.page--; loadResults(el); });
-  results.querySelector('#nextBtn').addEventListener('click', () => { state.page++; loadResults(el); });
+  results.querySelector('#prevBtn').addEventListener('click', () => { state.page--; loadResults(el); window.scrollTo(0, 0); });
+  results.querySelector('#nextBtn').addEventListener('click', () => { state.page++; loadResults(el); window.scrollTo(0, 0); });
 
   // inline playback — signed URL fetched on first play
   const urlCache = {};
@@ -241,34 +311,32 @@ async function loadResults(el) {
     } catch (e) { toast(e.message, 'error'); btn.disabled = false; }
   }));
 
-  // bulk add-to-dataset / delete
+  // Selection. Phone cards and desktop rows are both in the DOM (one hidden),
+  // so only the visible copy of each checkbox counts.
+  const visible = (sel) => [...results.querySelectorAll(sel)].filter((c) => c.offsetParent !== null);
+  const selectedIds = () => [...new Set(visible('.rowSel:checked').map((c) => c.value))];
   const bulkbar = el.querySelector('#bulkbar');
   const refreshBulk = () => {
-    const sel = [...results.querySelectorAll('.rowSel:checked')];
-    bulkbar.classList.toggle('hidden', !sel.length);
-    bulkbar.classList.toggle('flex', !!sel.length);
-    el.querySelector('#selCount').textContent = `${sel.length} file${sel.length === 1 ? '' : 's'} selected`;
+    const n = selectedIds().length;
+    bulkbar.classList.toggle('hidden', !n);
+    bulkbar.classList.toggle('flex', !!n);
+    el.querySelector('#selCount').textContent = `${n} selected`;
   };
   results.querySelectorAll('.rowSel').forEach((c) => c.addEventListener('change', refreshBulk));
-  results.querySelector('#selAll').addEventListener('change', (e) => {
+  results.querySelectorAll('.selAll').forEach((all) => all.addEventListener('change', (e) => {
     results.querySelectorAll('.rowSel').forEach((c) => { c.checked = e.target.checked; });
     refreshBulk();
-  });
+  }));
 
-  // Bulk approve accepts each file's *own* predicted label, so a mixed selection
-  // still ends up correctly labelled rather than sharing one blanket class.
+  // Bulk approve keeps each file's *own* label (a human label if it has one,
+  // otherwise its prediction), so a mixed selection never shares one blanket class.
   el.querySelector('#approveSel').onclick = async () => {
-    const ids = [...results.querySelectorAll('.rowSel:checked')].map((c) => c.value);
+    const ids = selectedIds();
     if (!confirm(`Approve ${ids.length} file${ids.length === 1 ? '' : 's'}?\n\n`
-                 + "Each keeps its own predicted label. Check any you are unsure of first — "
+                 + "Each keeps its own label. Check any you are unsure of first — "
                  + 'approving marks them as human-verified in every export.')) return;
     try {
-      const r = await api('/audio/review', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audio_file_ids: ids, review_status: 'approved', reviewed_by: getUser()?.email ?? null }),
-      });
+      const r = await api.json('/audio/review', 'POST', { audio_file_ids: ids, review_status: 'approved' });
       toast(`Approved ${r.updated} file${r.updated === 1 ? '' : 's'}`, 'success');
       refreshCounts(el);
       loadResults(el);
@@ -276,28 +344,19 @@ async function loadResults(el) {
   };
 
   const dsSelect = el.querySelector('#dsSelect');
-  api('/datasets').then((ds) => {
-    dsSelect.innerHTML = ds.length
-      ? ds.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')
-      : '<option value="">No datasets — create one first</option>';
-  });
   el.querySelector('#addToDs').onclick = async () => {
-    const ids = [...results.querySelectorAll('.rowSel:checked')].map((c) => c.value);
-    if (!dsSelect.value) { toast('Create a dataset first on the Datasets page', 'error'); return; }
+    const ids = selectedIds();
+    if (!dsSelect.value) { toast('Create a folder first on the Datasets page', 'error'); return; }
     try {
-      const r = await api(`/datasets/${dsSelect.value}/items`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audio_file_ids: ids }),
-      });
-      toast(`Added ${r.added} file${r.added === 1 ? '' : 's'} to the dataset`, 'success');
-      results.querySelectorAll('.rowSel:checked').forEach((c) => { c.checked = false; });
+      const r = await api.json(`/datasets/${dsSelect.value}/items`, 'POST', { audio_file_ids: ids });
+      toast(`Added ${r.added} file${r.added === 1 ? '' : 's'} to the folder`, 'success');
+      results.querySelectorAll('.rowSel:checked, .selAll:checked').forEach((c) => { c.checked = false; });
       refreshBulk();
     } catch (e) { toast(e.message, 'error'); }
   };
 
   el.querySelector('#deleteSel').onclick = async () => {
-    const ids = [...results.querySelectorAll('.rowSel:checked')].map((c) => c.value);
+    const ids = selectedIds();
     if (!confirm(`Delete ${ids.length} file${ids.length === 1 ? '' : 's'} permanently?\n\n`
                  + 'Their classifications and dataset links are removed too. This cannot be undone.')) return;
 

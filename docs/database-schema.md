@@ -3,28 +3,42 @@
 Migration source of truth: [supabase/migrations/](../supabase/migrations/)
 
 ```
+auth.users  1 ──1 profiles             (public username, name, role, avatar)
+auth.users  1 ──< audio_files / datasets / devices   (owner: user_id)
 audio_files 1 ──< classifications      (per-window YAMNet results)
-audio_files 1 ──< metadata             (flexible key-value tags)
+audio_files 1 ──< metadata             (flexible key-value tags, e.g. notes)
 datasets    >──< audio_files           (via dataset_items, many-to-many)
-devices                                 (ESP32 registry, standalone)
+datasets    >──< auth.users            (via dataset_likes — Community likes)
+devices     1 ──< audio_files          (ESP32 clips, device_id)
 ```
 
 ## Tables
 
 ### audio_files
-One row per audio file (manual upload or ESP32 stream).
+One row per audio file (in-app recording, manual upload or ESP32 stream).
 
 | Column | Type | Notes |
 |---|---|---|
 | id | uuid PK | `gen_random_uuid()` |
-| filename | text | original filename |
+| filename | text | original filename, or `<label>_<timestamp>.wav` for recordings |
 | storage_path | text unique | path in `audio-files` bucket |
 | duration | double | seconds |
 | sample_rate | int | Hz — target 16000 |
 | file_size | bigint | bytes |
-| source | text | `upload` \| `esp32` (check constraint) |
+| source | text | `upload` \| `esp32` \| `recording` (check constraint) |
 | uploaded_at | timestamptz | default `now()` |
-| user_id | uuid FK → auth.users | null for ESP32 uploads |
+| user_id | uuid FK → auth.users | owner; ESP32 clips take the device's owner |
+| status | text | pipeline: `pending` → `processing` → `done` \| `error` |
+| waveform | jsonb | 600 precomputed peaks for the player |
+| review_status | text | human verdict: `unreviewed` \| `approved` \| `rejected` |
+| verified_label | text | label a person gave; NULL = only YAMNet's guess |
+| label_origin | text | `capture` (named while recording) \| `review` \| NULL |
+| reviewed_by, reviewed_at, review_note | | who gave the verdict, when, why |
+| device_id | uuid FK → devices | ESP32 clips |
+| recorded_at | timestamptz | capture time (phone clock, sanity-checked; ESP32 arrival) |
+| latitude, longitude | double | GPS fix from the Record page, optional |
+| location_accuracy | real | metres |
+| location_name | text | reverse-geocoded place, e.g. "Seri Iskandar, Perak" |
 
 ### classifications
 YAMNet classifies per 0.96s window (hop 0.48s) — one row per window per class kept.
@@ -38,22 +52,50 @@ YAMNet classifies per 0.96s window (hop 0.48s) — one row per window per class 
 | window_start / window_end | double | seconds |
 
 ### metadata
-Flexible key-value tags per file (e.g. `location=lab-3`, `session=morning`).
-Unique on `(audio_file_id, key)`.
+Flexible key-value tags per file. Recordings store `notes` and
+`recording_device` (e.g. "Android phone · Chrome") here; every key is exported
+as a `meta_<key>` column. Unique on `(audio_file_id, key)`.
 
-### datasets / dataset_items
-Curated collections for ML training export. `dataset_items` is the many-to-many
-join table with composite PK `(dataset_id, audio_file_id)`.
+### datasets / dataset_items / dataset_likes
+Curated collections — shown in the app as *folders* — for training export.
+
+| Column | Notes |
+|---|---|
+| name, description | |
+| labels | `text[]` — the classes this folder collects; offered as one-tap chips when recording |
+| visibility | `private` (default) \| `public` (listed in Community) |
+| license | `CC-BY-4.0` \| `CC-BY-SA-4.0` \| `CC-BY-NC-4.0` \| `CC0-1.0` — required to publish |
+| share_location | include exact coordinates in public downloads (default false) |
+| published_at, download_count, updated_at | |
+
+`dataset_items` is the many-to-many join with composite PK
+`(dataset_id, audio_file_id)`; `dataset_likes` has PK `(dataset_id, user_id)`.
+
+### profiles
+One row per auth user, created by the backend on the user's first request.
+`username` (unique, `^[a-z0-9_]{3,30}$`, shown publicly), `full_name`, `bio`,
+`organization`, `role` (student / researcher / lecturer / industry / hobbyist /
+other), `avatar_path` (object in the public `avatars` bucket).
 
 ### devices
-ESP32 registry: `device_name`, `api_key` (unique — used to authenticate chunked
-POST uploads), `last_seen`. No RLS policies → service-role (backend) access only.
+ESP32 registry: `user_id` (owner), `device_name` (unique per owner), `api_key`
+(unique — used to authenticate chunked POST uploads), `last_seen`. No RLS
+policies → service-role (backend) access only.
+
+## RPCs
+
+- `dashboard_stats(p_user, min_confidence)` — one user's aggregates, including
+  `label_distribution` of human-given labels.
+- `community_datasets(p_viewer, p_query, p_sort, p_owner, p_limit, p_offset)` —
+  the public catalogue with clip counts (rejected clips excluded), likes and top labels.
 
 ## Security model
 
-- **RLS enabled on all tables.** Dashboard users (authenticated) see their own
-  rows plus ESP32-sourced files (`user_id is null`).
-- **Backend uses the service-role key** and bypasses RLS; it is the only writer
-  for `classifications` and `devices`.
+- **The backend is the access-control layer.** It uses the service-role key,
+  which bypasses RLS, so it verifies the caller's Supabase JWT on every request
+  and filters every query by `user_id` itself. Someone else's row is a 404.
+- **RLS is enabled on all tables** as a second line for any direct client
+  access: own rows, public datasets and profiles read-only.
 - **Storage bucket `audio-files` is private** (50 MB/file limit, audio MIME types
-  only); authenticated users have read policy, writes go through the backend.
+  only); the browser only ever gets short-lived signed URLs.
+- **Bucket `avatars` is public-read** (2 MB, JPEG/PNG/WebP); writes go through the backend.

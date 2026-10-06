@@ -1,8 +1,9 @@
 import os
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from .. import config
+from ..auth import User, current_user
 from ..db import get_client
 
 router = APIRouter(tags=["system"])
@@ -18,7 +19,7 @@ def client_config():
     }
 
 
-@router.get("/stats", summary="Dashboard aggregates (single RPC round-trip)")
-def dashboard_stats():
+@router.get("/stats", summary="Your dashboard aggregates (single RPC round-trip)")
+def dashboard_stats(user: User = Depends(current_user)):
     client = get_client()
-    return client.rpc("dashboard_stats").execute().data
+    return client.rpc("dashboard_stats", {"p_user": user.id}).execute().data

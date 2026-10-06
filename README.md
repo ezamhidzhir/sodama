@@ -2,13 +2,13 @@
 
 Final Year Project (FYP) — Muhammad Ezamuddin Bin Hidzhir (24000202), Universiti Teknologi PETRONAS.
 
-A centralized web-based system for collecting, classifying, organizing, and exporting audio datasets for machine learning training. Audio is collected via ESP32 + INMP441 sound sensor or manual upload, automatically classified with YAMNet, and managed through a searchable dashboard backed by Supabase.
+A centralized, mobile-friendly web system for collecting, labelling, organizing, exporting and sharing audio datasets for machine learning training. Audio is recorded on a phone inside the app, uploaded, or streamed from an ESP32 + INMP441 sensor; it is automatically classified with YAMNet, labelled by people, and managed per user account through a searchable dashboard backed by Supabase. Finished datasets can be exported as HuggingFace-ready ZIPs or published to the in-app Community.
 
 ## Repository Structure
 
 ```
 /backend    FastAPI server — audio upload, YAMNet inference, metadata, dataset APIs
-/frontend   Web dashboard (HTML/CSS/JS) for ML trainers
+/frontend   Mobile-first web app (HTML/CSS/JS) — record, library, datasets, community, profile
 /firmware   ESP32 + INMP441 firmware (I2S capture, WAV encode, HTTP chunked upload)
 /docs       Project documentation, decision log, database schema
 ```
@@ -73,21 +73,69 @@ Keep that terminal open — closing it (or `Ctrl+C`) stops the server and
 > something you want to discover in front of an examiner. Any activity on the
 > project resets the inactivity timer.
 
+Every endpoint except `/ingest`, `/config` and `/health` requires
+`Authorization: Bearer <Supabase access token>`; the backend verifies it with
+Supabase and scopes every query to that user's own rows.
+
 | Endpoint | Purpose |
 |---|---|
-| `POST /upload` | Upload WAV/MP3/FLAC/OGG → standardized to 16kHz mono → classified in background |
+| `POST /upload` | Upload WAV/MP3/FLAC/OGG → standardized to 16kHz mono → classified in background (optional `dataset_id`) |
+| `POST /recordings` | Save a clip recorded in the app, with label, folder, time and location |
 | `GET /audio` | List/search: pagination, `class_name`, `min_confidence`, `source`, `status`, `review_status`, date range |
 | `GET /audio/{id}` | Detail: waveform peaks, per-window classifications, top classes, signed download URL |
 | `PATCH /audio/{id}/review` | Approve, correct or reject a label |
 | `POST /audio/review` | Same verdict applied to many files at once |
-| `POST /datasets` + `/items` | Curate datasets (many-to-many with audio files) |
+| `POST /datasets` + `/items` | Curate datasets (folders; many-to-many with audio files) with a class list |
+| `PATCH /datasets/{id}` | Edit, or publish to Community (`visibility`, `license`, `share_location`) |
 | `GET /datasets/{id}/export` | ZIP of audio + `metadata.csv`/`metadata.json` + `README.md`, optional train/val/test split |
-| `POST /ingest` | ESP32 raw PCM ingest — `X-API-Key` auth against `devices` table |
+| `GET /community/datasets` | Browse/search public datasets (sort: popular, newest, likes, clips) |
+| `GET /community/datasets/{id}` (+ `/download`, `/like`) | Public dataset card, sample player, download, like |
+| `GET /community/users/{username}` | A contributor's public page |
+| `GET/PATCH/DELETE /me`, `POST /me/avatar` | Own profile, avatar, account deletion |
+| `POST /ingest` | ESP32 raw PCM ingest — `X-API-Key` auth; clips belong to the device's owner |
 | `POST /devices` | Register a device; API key returned once |
 
 Classification runs as a FastAPI background task: `audio_files.status` goes
 `pending → processing → done` (or `error`), and per-0.96s-window top-3 YAMNet
 classes land in the `classifications` table.
+
+## Recording in the app
+
+The **Record** page (centre button of the phone tab bar) captures audio from the
+phone's microphone and saves it straight into a folder:
+
+1. Pick or create a folder once — e.g. *Car engines* with classes Honda, Toyota, Proton.
+2. Tap record, tap stop. Date, time, duration and (if allowed) GPS location plus
+   a place name are captured automatically.
+3. Listen back, tap a class chip or type a label, save. The next take defaults to
+   the same label, so collecting twenty Honda clips is twenty record/save taps.
+
+Audio is captured as raw PCM through an AudioWorklet with echo cancellation,
+noise suppression and auto-gain **switched off** (they alter the sound a model
+should learn), resampled to 16 kHz in the browser and uploaded as WAV. The
+microphone only works on `https://` pages or `localhost`.
+
+A recorded clip arrives already labelled and approved with
+`label_source = human_annotated`; YAMNet still classifies it as a sanity check.
+
+## Accounts, profiles and password reset
+
+Each user sees only their own audio, datasets and devices. Profiles
+(`profiles` table) hold a public username, name, role, organisation, bio and
+avatar, created automatically on first sign-in. Password reset uses Supabase's
+recovery email: **Forgot password?** on the sign-in page → email link → back to
+`#/reset` to choose a new password. For this to work the app's URL must be in
+Supabase → Authentication → URL Configuration → *Redirect URLs*, and real users
+need a custom SMTP provider (the built-in one only mails project team members).
+
+## Community
+
+Publishing a dataset (its page → *Share with the community*) makes it
+browsable by every signed-in user, like a small HuggingFace Hub. Publishing
+requires a description, a licence (CC BY, CC BY-SA, CC BY-NC or CC0) and at
+least one labelled, non-rejected clip. Downloads are the same HF-compatible ZIP
+as an export, except reviewer emails become the author's `@username` and exact
+coordinates are dropped unless the owner opts in.
 
 ## Label review
 
@@ -97,7 +145,8 @@ tone "Telephone". Every clip therefore carries a second, independent state:
 on the audio detail page.
 
 That verdict is what the export reports. Each manifest row carries a
-`label_source` of `human_confirmed`, `human_corrected`, or `auto`, so whoever
+`label_source` of `human_annotated` (named while recording), `human_confirmed`,
+`human_corrected`, or `auto`, so whoever
 trains on the data can tell verified labels from unchecked guesses — and filter
 on it. Rejected clips are never exported.
 
@@ -128,4 +177,4 @@ ds = load_dataset("audiofolder", data_dir="./")
 
 ## Database
 
-Schema lives in [docs/database-schema.md](docs/database-schema.md); the applied migration is mirrored in [supabase/migrations/](supabase/migrations/). Tables: `audio_files`, `classifications`, `metadata`, `datasets`, `dataset_items`, `devices` — all with Row Level Security enabled.
+Schema lives in [docs/database-schema.md](docs/database-schema.md); the applied migration is mirrored in [supabase/migrations/](supabase/migrations/). Tables: `audio_files`, `classifications`, `metadata`, `datasets`, `dataset_items`, `dataset_likes`, `devices`, `profiles` — all with Row Level Security enabled.
