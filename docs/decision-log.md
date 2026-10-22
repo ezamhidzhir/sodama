@@ -129,3 +129,29 @@ Maklum balas supervisor: aliran ESP32 → server sukar difahami kerana ia "berga
 - [x] Migration 9: `audio_files.client_id/sha256/session_id/chunk_index`, indeks unik, jadual `ingest_sessions` + `ingest_chunks` (RLS tanpa polisi), `source` `esp32` → `device`
 - [x] `/ingest` terima fail audio (WAV/FLAC/MP3/OGG) atau PCM mentah (serasi ke belakang)
 - [x] Halaman Devices: kad "How a device sends audio"
+
+### Fasa 6b — Clip, privasi, kuota, editor, Google, Report (23 Oktober 2026)
+
+Daripada maklum balas supervisor dan soalan pengguna: sistem mesti mengurus data bunyi (potong → label → semak), melindungi privasi, dan selamat dibuka kepada orang awam.
+
+| # | Keputusan | Pilihan | Sebab |
+|---|---|---|---|
+| 43 | Label fail | Purata confidence atas **semua** window (window tanpa kelas = 0) | Peraturan lama (purata atas window di mana kelas muncul) membiarkan satu salakan anjing 0.9 mengalahkan bunyi kereta 60 s. |
+| 44 | Potong rakaman | Clip **maya**: `parent_id` + `clip_start/end`, tiada fail baru | Tiada storan/kuota tambahan; klasifikasi diambil dari window induk, jadi tiada inferens semula. |
+| 45 | Cara potong | Ikut bunyi (tukar kelas top-1, lipat < min ke jiran) / setiap N saat / manual | Tiga keperluan berbeza: peristiwa semula jadi, model yang perlukan panjang sama, dan pilihan manusia. |
+| 46 | Clip dalam folder | Clip **menggantikan** rakaman induk dalam folder (pilihan, default ON) | Export tidak membawa audio yang sama dua kali. |
+| 47 | Split tanpa kebocoran | Clip dari rakaman yang sama sentiasa dalam split yang sama; kumpulan diagih ke split yang paling berkurangan | Saat bersebelahan dari rakaman yang sama dalam train dan test = data leakage; accuracy palsu tinggi. |
+| 48 | Privasi | **Sentiasa ON**: YAMNet → senyapkan window suara (≥ 0.3, padding 0.5 s) → baru simpan. ≥ 80 % suara → upload/rakaman ditolak; device simpan versi senyap | Suara tidak pernah sampai ke storan. Disenyapkan, bukan dipotong, supaya timeline kekal sejajar. Nyanyian/ketawa tidak disenyapkan (bukan perkataan). |
+| 49 | Klasifikasi | Segerak dalam request (threadpool), bukan background task | Penapis privasi perlukan skor YAMNet sebelum simpan, jadi klasifikasi berlaku dalam laluan yang sama; tiada status tersangkut lagi. |
+| 50 | Had | Upload 10 min, rakaman 5 min, chunk device 10 min; semak header sebelum decode | MP3 50 MB boleh mengandungi ~1 jam → >1 GB RAM bila didekod; satu fail boleh menjatuhkan server untuk semua orang. |
+| 51 | Kuota | 30 min audio tersimpan setiap pengguna (`profiles.quota_seconds`) | Storan Supabase free 1 GB ≈ 8.7 jam WAV; kuota menjadikan kapasiti boleh diramal untuk user testing. |
+| 52 | Format simpanan | **FLAC** 16 kHz 16-bit; download/export tetap WAV | Lossless, ~separuh saiz WAV → hampir dua kali ganda audio dalam storan yang sama. |
+| 53 | Editor | Loop (crossfade linear) dan merge = fail baru bertanda `edit_kind`, dikecualikan dari export secara default | Audio berulang menggelembungkan dataset; crossfade linear elak clipping bila bunyi serupa bertindih. |
+| 54 | Salin dari Community | Salinan dengan `attribution` (pengarang, lesen, dataset); export ada bahagian Credits | Semua lesen yang ditawarkan membenarkan suntingan dengan syarat kredit. |
+| 55 | Main clip | Pautan backend bertandatangan HMAC (`/audio/{id}/file`), luput 1 jam | Elemen `<audio>` tidak boleh hantar header Authorization; kontrak sama dengan signed URL Supabase. |
+| 56 | Report | 3 pelapor berbeza → `datasets.hidden_at`; pemilik nampak sebab, bukan siapa | Penapis privasi boleh terlepas; komuniti perlu cara untuk menanda. |
+| 57 | Google | Supabase OAuth (implicit flow) → fragmen URL yang sama dengan pautan emel | Tiada perpustakaan tambahan; tiada pengesahan emel diperlukan untuk akaun Google. |
+
+- [x] Migration 10: clip maya, `edit_kind`/`derived_from`/`attribution`, `speech_removed_seconds`/`privacy_redactions`, `profiles.quota_seconds`, `dataset_reports` + `datasets.hidden_at`, RPC `dashboard_stats` & `community_datasets` dikemas kini
+- [x] Modul baharu: `privacy.py`, `segments.py`, `media.py`, `routers/edits.py`; `tasks.py` dibuang
+- [x] Frontend: panel Split + senarai clip, editor bunyi (`#/edit`, `#/sound`), tab Single sounds + Report di Community, Merge di Library, kuota di Upload/Profile, butang Google

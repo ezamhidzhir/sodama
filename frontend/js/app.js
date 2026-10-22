@@ -13,6 +13,7 @@ import { renderDatasets } from './pages/datasets.js';
 import { renderCommunity, renderCommunityDataset, renderUserPage } from './pages/community.js';
 import { renderProfile } from './pages/profile.js';
 import { renderDevices } from './pages/devices.js';
+import { renderEditor } from './pages/editor.js';
 import { stopAudio, avatar, esc, sheet, toast, canLeave } from './ui.js';
 
 const routes = {
@@ -26,10 +27,12 @@ const routes = {
   u: renderUserPage,       // #/u/{username}
   profile: renderProfile,
   devices: renderDevices,
+  edit: (el, id) => renderEditor(el, id),                       // #/edit/{id}
+  sound: (el, id) => renderEditor(el, id, { community: true }),  // #/sound/{id}
 };
 const PUBLIC_PAGES = ['login', 'signup', 'forgot'];
 // Which nav entry lights up for pages that are not in the nav themselves.
-const NAV_PARENT = { audio: 'library', u: 'community' };
+const NAV_PARENT = { audio: 'library', edit: 'library', u: 'community', sound: 'community' };
 
 const authView = document.getElementById('authView');
 const appShell = document.getElementById('appShell');

@@ -26,6 +26,10 @@ apa yang anda cakap depan examiner sama dengan apa yang sistem betul-betul buat.
 | Waveform peaks | **600** titik (jsonb) | UI lukis gelombang tanpa download audio |
 | Had saiz fail | **50 MB** | Sama dengan limit bucket Supabase |
 | Rakaman dalam app | min **0.5 s**, max **300 s** (5 minit) | |
+| Upload | max **10 minit** setiap fail | Disemak dari header sebelum decode (elak RAM meletup) |
+| Kuota | **30 minit** audio tersimpan setiap user | Clip maya tidak dikira |
+| Format simpanan | **FLAC** (download/export = WAV) | Lossless, ~separuh saiz |
+| Penapis privasi | skor suara ≥ **0.3**, padding **0.5 s**, tolak jika ≥ **80 %** suara | Disenyapkan **sebelum** simpan |
 | Signed URL | sah **3600 s** (1 jam) | Bucket private |
 | Cache token JWT (backend) | **60 s** | Elak round-trip setiap request |
 | Split default | **70 / 15 / 15** | Stratified per kelas + seeded |
@@ -313,13 +317,17 @@ decode_to_standard(bytes) → np.float32 array @ 16 kHz mono
 4. Data mentah = bukti. Collapse awal = maklumat hilang selamanya.
    *Kos:* ~2 window/saat × sampai 3 baris = sampai ~6 baris per saat audio. Klip 20 s ≈ 120 baris.
 
-### 7.3 Pipeline background — `tasks.py`
-`pending` → (task mula) `processing` → insert baris (batch 500) → `done`; exception → `error`.
-- **Kenapa background task, bukan tunggu?** YAMNet ambil masa; kalau tunggu, request boleh
-  timeout dan user tercegat. Dengan background task, UI dapat 201 serta-merta dan poll status.
-- **Kenapa batch 500?** Elak satu insert request terlalu besar.
-- **Kelemahan jujur:** kalau server restart masa `processing`, status tersangkut selamanya
-  (tiada retry/queue). Lihat Bahagian 11.
+### 7.3 Pipeline simpan — `clips.create_clip()` + `privacy.py`
+```
+kuota → YAMNet (skor penuh) → senyapkan window suara → (jika ada suara) YAMNet semula
+      → FLAC → Storage → baris audio_files (status 'done') → baris classifications (batch 500)
+```
+- **Kenapa segerak, bukan background task lagi?** Penapis privasi **perlukan** skor YAMNet
+  *sebelum* fail disimpan — suara tak boleh sampai ke storan langsung. Bila skor dah ada,
+  klasifikasi siap sekali. Ia dijalankan dalam threadpool supaya request lain tak tersekat.
+- **Kesan sampingan baik:** tiada lagi status tersangkut `processing` bila server restart.
+- **Kenapa YAMNet dijalankan semula selepas senyap?** Supaya timeline menunjukkan "Silence"
+  di tempat suara, bukan label "Speech" yang menunjuk kepada bunyi yang dah tiada.
 
 ### 7.4 Waveform peaks — kenapa 600 titik
 `np.array_split(|waveform|, 600)` → ambil `max` setiap chunk → simpan jsonb. Sebab UI nak lukis
@@ -328,9 +336,10 @@ jadi kira sekali sahaja.
 
 ### 7.5 Dari 120 baris → satu label (ini "algoritma" anda) — `labels.py`
 ```
-predicted_labels():  untuk setiap fail →
-   kumpul confidence setiap class_name merentas window →
-   ambil MEAN setiap kelas → kelas dengan mean tertinggi = predicted_label
+class_ranking():  untuk setiap fail →
+   N = bilangan window dalam fail
+   skor kelas = JUMLAH confidence kelas itu ÷ N   (window tanpa kelas itu dikira 0)
+   kelas dengan skor tertinggi = predicted_label
 ```
 - **Kenapa mean, bukan max?** Kelas yang sederhana yakin **sepanjang** klip lebih mewakili
   bunyi itu daripada kelas yang spike sekali sahaja.
@@ -339,10 +348,10 @@ predicted_labels():  untuk setiap fail →
 - **Kenapa satu modul dikongsi panel semakan dan export?** Kalau panel kira label dengan satu
   cara dan export cara lain, penyemak approve "Pump (liquid)" tapi manifest hantar benda lain.
   Satu peraturan = apa yang diluluskan itulah yang dieksport.
-- **Kelemahan yang anda patut sebut sendiri:** mean dikira hanya atas window di mana kelas itu
-  **muncul**. Jadi kelas yang muncul dalam 1 window dengan 0.9 boleh kalahkan kelas yang muncul
-  dalam 20 window dengan 0.7. Pembaikan: timbang dengan liputan, cth `mean × √(bilangan window)`.
-  Detail page memang papar kolum `windows` supaya manusia nampak perbezaan itu.
+- **Kenapa dibahagi dengan SEMUA window?** Peraturan lama ambil purata hanya atas window di
+  mana kelas itu muncul — satu salakan anjing (0.9, 1 window) mengalahkan kereta (0.5, 120
+  window). Sekarang kelas mesti yakin **dan** hadir lama untuk menang. (Diuji: kes kereta vs
+  anjing.)
 
 ### 7.6 Empat asal label — `label_source` (idea teras projek)
 ```python
@@ -396,6 +405,16 @@ tanpa kira huruf besar/kecil dengan kelas yang sudah ada dalam folder; kalau pad
 lama. Kelas betul-betul baharu ditambah ke `datasets.labels` supaya rakaman seterusnya dapat
 butang satu-tap.
 
+### 7.9b Potong jadi clip — `segments.py` + `POST /audio/{id}/clips`
+- **Clip maya:** baris `audio_files` dengan `parent_id`, `clip_start`, `clip_end`, **tanpa**
+  `storage_path`. Tiada audio disalin → tiada storan & kuota. Main/export: baca bahagian itu
+  dari fail induk (`soundfile` seek, bukan decode penuh).
+- **Klasifikasi clip:** window induk yang **tengahnya** jatuh dalam clip, masa dianjak ke 0.
+  Tiada YAMNet semula → potong 100 clip pun serta-merta.
+- **Auto (ikut bunyi):** top-1 setiap window → gabung window berturut sama kelas → bahagian
+  < min (default 1 s) dilipat ke jiran yang lebih panjang → Silence boleh dibuang.
+- **Clip ganti induk dalam folder** → export tak bawa audio sama dua kali.
+
 ### 7.10 Train/validation/test split — `_stratified_split()`
 ```python
 for setiap label:
@@ -412,6 +431,10 @@ Tiga keputusan, tiga sebab:
    titik "research rigour" yang patut anda tonjolkan.)*
 3. **Kelas dengan satu contoh → train** — lebih baik model pernah nampak sekali daripada tak
    pernah nampak.
+4. **Clip dari rakaman yang sama = satu kumpulan, satu split** ⭐ — kalau saat 0–3 dalam train
+   dan saat 3–6 dalam test, model "ingat" rakaman itu dan accuracy jadi palsu tinggi (**data
+   leakage**). Kumpulan diagih ke split yang paling banyak kekurangan, supaya test tak kosong
+   walaupun kumpulan besar. *(Titik rigour kedua yang patut ditonjolkan.)*
 
 ### 7.11 Export ZIP — `build_export()`
 ```
@@ -1102,22 +1125,22 @@ yang jelas."
 | 1 | **Firmware ESP32 belum ada** | Kontrak `/ingest` siap; didemo dengan klien Python di laptop kedua; hardware belum dibeli | Beli ESP32+INMP441, tulis I2S capture + kontrak yang sama |
 | 1b | **Sesi stream yang tak pernah ditutup** | Chunk `join` kekal dalam `ingest_chunks` (dibuang bila device/akaun dipadam) | Sweeper: tutup automatik sesi tanpa chunk baru > 1 jam |
 | 2 | **Tiada automated test suite** | Ada 2 skrip pengesahan + ujian manual setiap fasa | pytest untuk endpoint, Playwright untuk UI, CI |
-| 3 | **Job klasifikasi boleh tersangkut** kalau server restart masa `processing` | Diketahui; tiada retry | Queue (Celery/RQ) + sweeper re-queue baris `processing` > 10 min |
+| 3 | **Upload panjang buat request lambat** (YAMNet + privasi segerak) | 10 min audio ≈ beberapa saat; had 10 min menjaga ia munasabah | Queue kerja inference berasingan |
+| 3b | **Penapis privasi best-effort** | Bisikan / suara di bawah bunyi kuat mungkin terlepas; ada Report + review manusia | Model VAD khusus + semakan manusia sebelum publish |
 | 4 | **Export bina ZIP dalam memori** | OK untuk saiz demo, tidak untuk 100k fail | Stream ZIP, atau manifest + presigned URL |
-| 5 | **Label mean tak ditimbang bilangan window** | Kelas yang spike 1 window boleh menang | Timbang dengan liputan, cth `mean × √windows` |
+| 5 | ~~Label mean tak ditimbang~~ **DIBAIKI (Fasa 6b)** | Kini purata atas semua window | — |
 | 6 | **Cache token 60 s** | Token di-revoke masih sah ≤60 s | Verify JWKS lokal + senarai revocation |
 | 7 | **CORS `*`** | Direkod dalam `deployment.md`; token dalam header, bukan cookie | Hadkan kepada domain dashboard |
 | 8 | **Confirm email dimatikan** | Untuk demo (had emel free tier) — decision #14 | Hidupkan + SMTP sendiri |
 | 9 | **`download_count` ada race** | Sengaja diterima; kehilangan satu kiraan tak memudaratkan | RPC increment atomik |
 | 10 | **Tiada inter-annotator agreement** | Satu dataset satu pemilik | Dua penyemak + Cohen's kappa |
-| 11 | **Tiada annotation peringkat segmen** | Label satu per fail, bukan per saat | Simpan span start/end (data per-window sudah ada) |
+| 11 | ~~Tiada annotation peringkat segmen~~ **DIBAIKI (Fasa 6b)** | Split into clips — setiap clip label & semakan sendiri | — |
+| 11b | **Loop/merge ialah audio sintetik** | Ditanda `edit_kind`, dikecualikan dari export secara default | — (reka bentuk sengaja) |
 | 12 | **Nominatim ada rate limit** | Best-effort; gagal → koordinat sahaja kekal | Cache sisi server, atau geocoder berbayar |
 | 13 | **Bergantung pada free tier Supabase** | Auto-pause selepas ~1 minggu idle | Tier berbayar, atau cron ping |
 | 14 | **1 worker sahaja** | YAMNet satu salinan per worker = risiko OOM | Pisahkan worker inference dari web |
 
 **Dua perkara housekeeping sebelum VIVA:**
-- **Kerja Fasa 5 belum di-commit** (`git status` tunjuk banyak fail modified/untracked). Commit
-  dahulu supaya repo yang examiner lihat = sistem yang anda demo.
 - **`what is sodama.pdf` sudah lapuk** — ia tiada Record, Community, dan akaun per-pengguna
   (Fasa 5). Kalau anda serahkan dokumen itu, sebut secara lisan bahawa Fasa 5 datang selepas
   dokumen itu ditulis, atau kemas kini ia dahulu.

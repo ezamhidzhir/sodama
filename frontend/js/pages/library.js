@@ -57,6 +57,21 @@ export async function renderLibrary(el) {
           </select>
         </div>
         <div>
+          <label class="block text-xs text-ink-muted mb-1.5">Show</label>
+          <select name="kind" class="${INPUT}">
+            <option value="">Recordings and clips</option>
+            <option value="recordings">Whole recordings</option>
+            <option value="clips">Clips only</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-ink-muted mb-1.5">Length (seconds)</label>
+          <div class="flex gap-2">
+            <input name="min_duration" type="number" inputmode="decimal" min="0" step="0.5" placeholder="min" class="${INPUT}">
+            <input name="max_duration" type="number" inputmode="decimal" min="0" step="0.5" placeholder="max" class="${INPUT}">
+          </div>
+        </div>
+        <div>
           <label class="block text-xs text-ink-muted mb-1.5">From</label>
           <input name="date_from" type="date" class="${INPUT}">
         </div>
@@ -94,6 +109,9 @@ export async function renderLibrary(el) {
       <select id="dsSelect" class="field bg-white border border-line rounded-full px-3 py-2 text-sm max-w-[10rem]"></select>
       <button id="addToDs" class="inline-flex items-center gap-1.5 bg-white border border-line px-3.5 py-2 rounded-full hover:border-brand hover:text-brand transition-colors">
         ${icon('plus', { size: 15 })} Add</button>
+      <button id="mergeSel" class="inline-flex items-center gap-1.5 bg-white border border-line px-3.5 py-2 rounded-full hover:border-brand hover:text-brand transition-colors"
+              title="Join the selected sounds into one, in list order">
+        ${icon('waveform', { size: 15 })} Merge</button>
       <button id="deleteSel" class="inline-flex items-center gap-1.5 bg-white border border-red-200 text-red-600 px-3.5 py-2 rounded-full hover:bg-red-50 transition-colors sm:ml-auto" aria-label="Delete selected">
         ${icon('trash', { size: 15 })}<span class="hidden sm:inline">Delete</span></button>
     </div>
@@ -189,6 +207,7 @@ async function loadResults(el) {
 
   const data = await api('/audio' + qs({
     ...state.filters, review_status: state.review, page: state.page, per_page: state.per_page }));
+  if (!el.querySelector('#bulkbar')) return;   // the person left the Library meanwhile
   if (!data.items.length) {
     const hint = state.review === 'unreviewed' ? 'Every file has been reviewed — nothing left in the queue'
       : state.review ? 'No files in this review state yet'
@@ -216,7 +235,7 @@ async function loadResults(el) {
               <div class="font-semibold truncate">${labelCell(f)}</div>
               ${reviewBadge(f.review_status)}
             </div>
-            <div class="text-xs text-ink-muted truncate mt-0.5">${esc(f.filename)}</div>
+            <div class="text-xs text-ink-muted truncate mt-0.5">${clipNote(f) || esc(f.filename)}</div>
             <div class="flex flex-wrap items-center gap-1.5 mt-2 text-xs text-ink-secondary">
               ${sourceBadge(f.source)}
               ${f.status !== 'done' ? statusBadge(f.status) : ''}
@@ -251,7 +270,7 @@ async function loadResults(el) {
               <td class="p-4">${playBtn(f)}</td>
               <td class="p-4 max-w-[18rem]">
                 <a class="text-brand hover:underline font-medium" href="#/audio/${f.id}">${labelCell(f)}</a>
-                <div class="text-xs text-ink-muted truncate">${esc(f.filename)}${f.location_name ? ` · ${esc(f.location_name)}` : ''}</div>
+                <div class="text-xs text-ink-muted truncate">${clipNote(f) || esc(f.filename)}${f.location_name ? ` · ${esc(f.location_name)}` : ''}</div>
               </td>
               <td class="p-4">${reviewBadge(f.review_status)}</td>
               <td class="p-4 tabular-nums">${fmtDuration(f.duration)}</td>
@@ -355,6 +374,21 @@ async function loadResults(el) {
     } catch (e) { toast(e.message, 'error'); }
   };
 
+  // Merge joins the selection in the order it is listed — what the person sees.
+  el.querySelector('#mergeSel').onclick = async () => {
+    const ids = selectedIds();
+    if (ids.length < 2) { toast('Select at least two sounds to merge', 'error'); return; }
+    const label = prompt(`Merge ${ids.length} sounds into one, in list order.
+
+Label for the merged sound (optional):`, '');
+    if (label === null) return;
+    try {
+      const row = await api.json('/audio/merge', 'POST', { audio_ids: ids, label: label.trim() || null });
+      toast('Merged into one sound — it is marked as edited and left out of training exports', 'success');
+      location.hash = `#/audio/${row.id}`;
+    } catch (e) { toast(e.message, 'error'); }
+  };
+
   el.querySelector('#deleteSel').onclick = async () => {
     const ids = selectedIds();
     if (!confirm(`Delete ${ids.length} file${ids.length === 1 ? '' : 's'} permanently?\n\n`
@@ -371,4 +405,11 @@ async function loadResults(el) {
     refreshCounts(el);
     loadResults(el);
   };
+}
+
+// A clip says where it came from instead of its generated filename.
+function clipNote(f) {
+  if (!f.parent_id) return '';
+  const t = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
+  return `${icon('clip', { size: 11 })} Clip ${t(f.clip_start)}–${t(f.clip_end)} of ${esc(f.parent_filename || 'a recording')}`;
 }

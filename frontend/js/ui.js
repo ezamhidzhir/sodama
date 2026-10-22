@@ -248,3 +248,22 @@ export function canLeave() {
   window.onbeforeunload = null;
   return true;
 }
+
+// How much of the user's storage allowance is used.
+export function quotaBar(q) {
+  if (!q || !q.quota_seconds) return '';
+  const pct = Math.min(100, (q.used_seconds / q.quota_seconds) * 100);
+  const min = (x) => (x / 60).toFixed(1);
+  const tone = pct >= 90 ? 'bg-accent' : 'bg-brand';
+  return `
+    <div class="bg-white rounded-xl2 shadow-card px-4 py-3">
+      <div class="flex justify-between text-xs text-ink-muted mb-1.5">
+        <span>Storage used</span>
+        <span class="tabular-nums">${min(q.used_seconds)} of ${min(q.quota_seconds)} min</span>
+      </div>
+      <div class="h-1.5 bg-page rounded-full overflow-hidden">
+        <div class="h-full ${tone} rounded-full" style="width:${pct}%"></div>
+      </div>
+      ${pct >= 90 ? '<div class="text-xs text-accent-dark mt-1.5">Almost full — delete files you no longer need. Clips you cut from a recording use no extra storage.</div>' : ''}
+    </div>`;
+}

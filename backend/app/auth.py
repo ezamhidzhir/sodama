@@ -51,7 +51,7 @@ def _verify(token: str) -> User:
         raise HTTPException(401, "session expired — sign in again")
 
     meta = res.user.user_metadata or {}
-    user = User(id=res.user.id, email=res.user.email or "", full_name=meta.get("full_name"))
+    user = User(id=res.user.id, email=res.user.email or "", full_name=meta.get("full_name") or meta.get("name"))  # Google sets both
     with _lock:
         if len(_cache) >= CACHE_MAX:
             _cache.clear()

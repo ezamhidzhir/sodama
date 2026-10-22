@@ -75,6 +75,15 @@ export async function signUp(email, password, fullName) {
   return { confirmed: false, email };
 }
 
+// Sign in (or sign up — same thing on first use) with Google. Supabase runs the
+// OAuth dance and returns to this app with the session in the URL fragment,
+// which consumeAuthRedirect picks up exactly as it does for email links.
+// The app's URL must be listed in Supabase → Authentication → Redirect URLs.
+export function signInWithGoogle() {
+  const back = encodeURIComponent(location.origin + '/');
+  location.href = `${cfg.url}/auth/v1/authorize?provider=google&redirect_to=${back}`;
+}
+
 export async function signIn(email, password) {
   const d = await authFetch('token?grant_type=password', { email, password });
   save(toSession(d));

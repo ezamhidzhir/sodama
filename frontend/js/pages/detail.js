@@ -185,15 +185,27 @@ export async function renderDetail(el, id) {
       <div class="min-w-0">
         <h1 class="text-[1.35rem] sm:text-[1.6rem] font-bold tracking-tight break-words">${esc(d.label || d.filename)}</h1>
         ${d.label ? `<div class="text-sm text-ink-muted break-all mt-0.5">${esc(d.filename)}</div>` : ''}
+        ${d.parent ? `
+          <div class="text-sm text-ink-secondary mt-1.5">
+            ${icon('clip', { size: 14 })} Clip ${fmt(d.clip_start)}–${fmt(d.clip_end)} of
+            <a href="#/audio/${d.parent.id}" class="text-brand hover:underline break-all">${esc(d.parent.filename)}</a>
+          </div>` : ''}
         <div class="flex flex-wrap items-center gap-2 mt-2.5 text-sm text-ink-secondary">
           ${sourceBadge(d.source)} ${statusBadge(d.status)}
-          <span class="text-ink-muted">${fmtDuration(d.duration)} · ${d.sample_rate} Hz · ${(d.file_size / 1024).toFixed(0)} KB</span>
+          ${d.speech_removed_seconds > 0 ? `
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border bg-page border-line text-ink-secondary"
+                  title="Human speech was detected and muted before this audio was stored">
+              ${icon('lock', { size: 12 })} ${fmtSeconds(d.speech_removed_seconds)} of speech muted</span>` : ''}
+          <span class="text-ink-muted">${fmtDuration(d.duration)} · ${d.sample_rate} Hz${d.parent ? ' · no extra storage' : ` · ${(d.file_size / 1024).toFixed(0)} KB`}</span>
         </div>
       </div>
       <div class="flex gap-2.5 shrink-0 w-full sm:w-auto">
-        <a href="${d.download_url}" download="${esc(d.filename)}" target="_blank" rel="noopener"
+        <a href="#/edit/${d.id}"
            class="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-full border border-line bg-white text-sm text-ink-secondary hover:border-brand hover:text-brand transition-colors">
-          ${icon('download', { size: 16 })} Download</a>
+          ${icon('pencil', { size: 16 })} Edit</a>
+        <a href="${d.file_url}" download
+           class="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-full border border-line bg-white text-sm text-ink-secondary hover:border-brand hover:text-brand transition-colors">
+          ${icon('download', { size: 16 })} Download WAV</a>
         <button id="deleteBtn"
            class="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-full border border-red-200 bg-white text-red-600 text-sm hover:bg-red-50 transition-colors">
           ${icon('trash', { size: 16 })} Delete</button>
@@ -217,6 +229,9 @@ export async function renderDetail(el, id) {
         <div class="flex flex-wrap gap-x-4 gap-y-1.5 mt-3 text-xs text-ink-secondary" id="legend"></div>
       </div>
     </div>
+
+    ${clipList(d)}
+    ${splitPanel(d)}
 
     <div class="grid lg:grid-cols-3 gap-4">
       <div class="bg-white rounded-xl2 shadow-card p-4 sm:p-6">
@@ -284,6 +299,21 @@ export async function renderDetail(el, id) {
     barGap: 1.5,
     barRadius: 3,
   });
+  const regions = ws.registerPlugin(WaveSurfer.Regions.create());
+  let ready = false;
+  const whenReady = (fn) => { if (ready) fn(); else pending.push(fn); };
+  const pending = [];
+  const markReady = () => { if (ready) return; ready = true; pending.splice(0).forEach((fn) => fn()); };
+  ws.once('decode', markReady);
+  ws.once('ready', markReady);
+  whenReady(() => (d.privacy_redactions || []).forEach(([start, end], i) => regions.addRegion({
+    id: `muted-${i}`,
+    start, end, drag: false, resize: false, color: 'rgba(98,109,88,0.18)',
+    content: muteLabel(),
+  })));
+  wireSplit(el, d, ws, regions, whenReady);
+  wireClipList(el, d);
+
   const playBtn = el.querySelector('#playBtn');
   const timeLabel = el.querySelector('#timeLabel');
   playBtn.addEventListener('click', () => ws.playPause());
@@ -318,7 +348,8 @@ export async function renderDetail(el, id) {
   }
 
   el.querySelector('#deleteBtn').addEventListener('click', async () => {
-    if (!confirm(`Delete "${d.filename}" permanently? This also removes its classifications and dataset links.`)) return;
+    const extra = d.clips.length ? `\n\nIts ${d.clips.length} clip${d.clips.length === 1 ? '' : 's'} will be deleted too.` : '';
+    if (!confirm(`Delete "${d.filename}" permanently? This also removes its classifications and dataset links.${extra}`)) return;
     try {
       await api(`/audio/${id}`, { method: 'DELETE' });
       toast('Audio file deleted', 'success');
@@ -365,3 +396,268 @@ const fmt = (sec) => {
   const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
   return `${m}:${String(s).padStart(2, '0')}`;
 };
+
+const fmtSeconds = (sec) => (sec < 60 ? `${Math.round(sec)} s` : `${(sec / 60).toFixed(1)} min`);
+
+function muteLabel() {
+  const span = document.createElement('span');
+  span.className = 'text-[10px] text-ink-muted px-1';
+  span.textContent = 'speech muted';
+  return span;
+}
+
+// ---------------------------------------------------------------- clips of this recording
+
+function clipList(d) {
+  if (!d.clips || !d.clips.length) return '';
+  const unreviewed = d.clips.filter((c) => c.review_status === 'unreviewed' && c.label).length;
+  return `
+    <div class="bg-white rounded-xl2 shadow-card p-4 sm:p-6 mb-4" id="clipList">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div>
+          <div class="font-semibold">Clips cut from this recording</div>
+          <div class="text-xs text-ink-muted">${d.clips.length} clip${d.clips.length === 1 ? '' : 's'} · each has its own label and review</div>
+        </div>
+        ${unreviewed ? `
+          <button id="approveAllClips" class="${BTN} bg-brand text-white hover:bg-brand-dark">
+            ${icon('check', { size: 16 })} Approve ${unreviewed} suggested label${unreviewed === 1 ? '' : 's'}</button>` : ''}
+      </div>
+      <div class="divide-y divide-line/60 max-h-96 overflow-y-auto">
+        ${d.clips.map((c) => `
+          <a href="#/audio/${c.id}" class="flex items-center gap-3 py-2.5 hover:bg-page/60 -mx-2 px-2 rounded-xl">
+            <span class="text-xs tabular-nums text-ink-muted w-20 sm:w-24 shrink-0">${fmt(c.clip_start)}–${fmt(c.clip_end)}</span>
+            <span class="flex-1 min-w-0 truncate">${esc(c.label || 'No label')}</span>
+            <span class="hidden sm:contents">${labelSourceBadge(c.label_source)}</span> ${reviewBadge(c.review_status)}
+          </a>`).join('')}
+      </div>
+    </div>`;
+}
+
+function wireClipList(el, d) {
+  el.querySelector('#approveAllClips')?.addEventListener('click', async () => {
+    const ids = d.clips.filter((c) => c.review_status === 'unreviewed' && c.label).map((c) => c.id);
+    if (!confirm(`Approve YAMNet's label for ${ids.length} clip(s)?\n\nOpen a clip first if you want to check or correct it.`)) return;
+    try {
+      await api('/audio/review', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ review_status: 'approved', audio_file_ids: ids }),
+      });
+      toast(`${ids.length} clip(s) approved`, 'success');
+      renderDetail(el, d.id);
+    } catch (e) { toast(e.message, 'error'); }
+  });
+}
+
+// ---------------------------------------------------------------- split into clips
+
+const MODES = [
+  ['auto', 'Follow the sound', 'Cut wherever YAMNet hears the sound change'],
+  ['fixed', 'Every N seconds', 'Equal-length clips — what most models train on'],
+  ['manual', 'Select by hand', 'Drag on the waveform to mark each clip'],
+];
+const SEG_COLORS = ['rgba(76,116,56,0.22)', 'rgba(42,111,151,0.22)', 'rgba(196,69,46,0.20)',
+                    'rgba(122,82,57,0.22)', 'rgba(150,120,30,0.22)'];
+
+function splitPanel(d) {
+  if (d.duration < 1) return '';
+  const field = 'field bg-white border border-line rounded-full px-3 py-2 text-sm';
+  return `
+    <div class="bg-white rounded-xl2 shadow-card p-4 sm:p-6 mb-4" id="splitPanel">
+      <div class="flex items-center gap-2.5 mb-1">
+        <span class="w-9 h-9 rounded-full bg-page text-brand grid place-items-center shrink-0">${icon('clip', { size: 17 })}</span>
+        <div>
+          <div class="font-semibold leading-tight">Split into clips</div>
+          <div class="text-xs text-ink-muted">Turn one long recording into short clips that each get their own label — no extra storage used</div>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap gap-2 mt-4" id="modeTabs">
+        ${MODES.map(([k, title], i) => `
+          <button type="button" data-mode="${k}"
+            class="modeTab text-sm px-4 py-2 rounded-full border ${i === 0 ? 'border-brand text-brand bg-brand-tint/40' : 'border-line text-ink-secondary'}">${title}</button>`).join('')}
+      </div>
+      <div class="text-xs text-ink-muted mt-2" id="modeHint">${MODES[0][2]}</div>
+
+      <div class="flex flex-wrap items-end gap-3 mt-4">
+        <label class="mode-auto text-xs text-ink-muted">Shortest clip
+          <select id="minLength" class="${field} block mt-1">
+            ${[0.5, 1, 2, 3, 5].map((v) => `<option value="${v}" ${v === 1 ? 'selected' : ''}>${v} s</option>`).join('')}
+          </select></label>
+        <label class="mode-auto inline-flex items-center gap-2 text-sm pb-2">
+          <input type="checkbox" id="skipSilence" checked> Leave out silence</label>
+        <label class="mode-fixed hidden text-xs text-ink-muted">Clip length (seconds)
+          <input id="fixedLength" type="number" min="0.5" max="600" step="0.5" value="3" class="${field} block mt-1 w-28"></label>
+        <label class="mode-fixed hidden inline-flex items-center gap-2 text-sm pb-2">
+          <input type="checkbox" id="keepShort"> Keep a shorter last clip</label>
+        <button type="button" id="previewBtn" class="mode-auto mode-fixed ${BTN} border border-line bg-white text-ink-secondary hover:border-brand hover:text-brand">
+          ${icon('eye', { size: 16 })} Preview cuts</button>
+      </div>
+
+      <div id="segList" class="mt-4"></div>
+
+      <div id="splitOptions" class="hidden mt-4 pt-4 border-t border-line/60 space-y-2.5">
+        ${d.verified_label ? `
+          <label class="flex items-start gap-2 text-sm">
+            <input type="checkbox" id="inheritLabel" class="mt-1">
+            <span>Give every clip this recording's label, <b>${esc(d.verified_label)}</b>, already approved
+              <span class="block text-xs text-ink-muted">Only when the whole recording is that one sound. Otherwise each clip gets YAMNet's suggestion to review.</span></span>
+          </label>` : ''}
+        ${(d.datasets || []).length ? `
+          <label class="flex items-start gap-2 text-sm">
+            <input type="checkbox" id="replaceInFolders" checked class="mt-1">
+            <span>Clips replace this recording in ${d.datasets.map((x) => `<b>${esc(x.name)}</b>`).join(', ')}
+              <span class="block text-xs text-ink-muted">So an export never contains the same audio twice.</span></span>
+          </label>` : ''}
+        <div class="flex justify-end">
+          <button type="button" id="createClipsBtn" class="${BTN} bg-brand text-white hover:bg-brand-dark">
+            ${icon('check', { size: 16 })} <span>Create clips</span></button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function wireSplit(el, d, ws, regions, whenReady) {
+  const panel = el.querySelector('#splitPanel');
+  if (!panel) return;
+  let mode = 'auto';
+  let segs = [];          // { region, label, confidence, on }
+  let dragOff = null;
+
+  const clear = () => {
+    segs.forEach((x) => x.region.remove());
+    segs = [];
+    renderList();
+  };
+
+  const addSeg = (start, end, label = null, confidence = null) => {
+    const region = regions.addRegion({
+      start, end, drag: true, resize: true,
+      color: SEG_COLORS[segs.length % SEG_COLORS.length],
+    });
+    const seg = { region, label, confidence, on: true };
+    segs.push(seg);
+    region.on('update-end', renderList);
+    return seg;
+  };
+
+  const setMode = (next) => {
+    mode = next;
+    panel.querySelectorAll('.modeTab').forEach((b) => {
+      const on = b.dataset.mode === mode;
+      b.classList.toggle('border-brand', on); b.classList.toggle('text-brand', on);
+      b.classList.toggle('bg-brand-tint/40', on);
+      b.classList.toggle('border-line', !on); b.classList.toggle('text-ink-secondary', !on);
+    });
+    panel.querySelector('#modeHint').textContent = MODES.find(([k]) => k === mode)[2];
+    panel.querySelectorAll('.mode-auto, .mode-fixed').forEach((n) => n.classList.add('hidden'));
+    panel.querySelectorAll(`.mode-${mode}`).forEach((n) => n.classList.remove('hidden'));
+    const inherit = panel.querySelector('#inheritLabel');
+    if (inherit) inherit.checked = mode === 'fixed';
+    clear();
+    dragOff?.();
+    dragOff = null;
+    if (mode === 'manual') {
+      whenReady(() => {
+        dragOff = regions.enableDragSelection({ color: SEG_COLORS[0] });
+      });
+    }
+  };
+
+  // A region drawn by dragging becomes a segment of its own.
+  regions.on('region-created', (region) => {
+    if (mode !== 'manual' || String(region.id).startsWith('muted-')
+        || segs.some((x) => x.region === region)) return;
+    region.setOptions({ color: SEG_COLORS[segs.length % SEG_COLORS.length] });
+    segs.push({ region, label: null, confidence: null, on: true });
+    region.on('update-end', renderList);
+    renderList();
+  });
+
+  panel.querySelectorAll('.modeTab').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+
+  panel.querySelector('#previewBtn').addEventListener('click', async () => {
+    const body = mode === 'auto'
+      ? { mode, min_length: +panel.querySelector('#minLength').value,
+          skip_silence: panel.querySelector('#skipSilence').checked }
+      : { mode, length: +panel.querySelector('#fixedLength').value,
+          keep_short_last: panel.querySelector('#keepShort').checked };
+    try {
+      const res = await api(`/audio/${d.id}/segments`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      clear();
+      whenReady(() => {
+        res.segments.forEach((x) => addSeg(x.start, x.end, x.label, x.confidence));
+        renderList();
+      });
+      if (!res.segments.length) toast('No clips to make with these settings', 'error');
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  function renderList() {
+    const list = panel.querySelector('#segList');
+    const options = panel.querySelector('#splitOptions');
+    segs.sort((a, b) => a.region.start - b.region.start);
+    if (!segs.length) {
+      list.innerHTML = mode === 'manual'
+        ? '<div class="text-sm text-ink-muted">Drag across the waveform above to mark a clip. Drag its edges to adjust.</div>' : '';
+      options.classList.add('hidden');
+      return;
+    }
+    const chosen = segs.filter((x) => x.on).length;
+    list.innerHTML = `
+      <div class="text-xs text-ink-muted mb-2">${segs.length} clip${segs.length === 1 ? '' : 's'} — drag their edges on the waveform to adjust, untick any you don't want</div>
+      <div class="divide-y divide-line/60 max-h-72 overflow-y-auto border border-line rounded-xl2 px-3">
+        ${segs.map((x, i) => `
+          <div class="flex items-center gap-3 py-2 text-sm">
+            <input type="checkbox" class="segOn" data-i="${i}" ${x.on ? 'checked' : ''}>
+            <span class="w-3 h-3 rounded-full shrink-0" style="background:${x.region.color}"></span>
+            <span class="tabular-nums text-ink-secondary w-28 shrink-0">${fmt(x.region.start)}–${fmt(x.region.end)}</span>
+            <span class="text-xs text-ink-muted tabular-nums w-12 shrink-0">${(x.region.end - x.region.start).toFixed(1)} s</span>
+            <span class="flex-1 min-w-0 truncate">${esc(x.label || '')}</span>
+            <button type="button" class="segPlay text-ink-muted hover:text-brand" data-i="${i}" title="Play this clip">${icon('play', { size: 14, fill: true })}</button>
+            <button type="button" class="segDel text-ink-muted hover:text-red-600" data-i="${i}" title="Remove">${icon('close', { size: 14 })}</button>
+          </div>`).join('')}
+      </div>`;
+    list.querySelectorAll('.segOn').forEach((c) => c.addEventListener('change', () => {
+      segs[+c.dataset.i].on = c.checked;
+      renderList();
+    }));
+    list.querySelectorAll('.segPlay').forEach((b) => b.addEventListener('click', () => segs[+b.dataset.i].region.play()));
+    list.querySelectorAll('.segDel').forEach((b) => b.addEventListener('click', () => {
+      segs[+b.dataset.i].region.remove();
+      segs.splice(+b.dataset.i, 1);
+      renderList();
+    }));
+    options.classList.remove('hidden');
+    const btn = panel.querySelector('#createClipsBtn');
+    btn.querySelector('span').textContent = `Create ${chosen} clip${chosen === 1 ? '' : 's'}`;
+    btn.disabled = !chosen;
+    btn.classList.toggle('opacity-50', !chosen);
+  }
+
+  panel.querySelector('#createClipsBtn').addEventListener('click', async (e) => {
+    const chosen = segs.filter((x) => x.on);
+    if (!chosen.length) return;
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const res = await api(`/audio/${d.id}/clips`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          segments: chosen.map((x) => ({ start: x.region.start, end: x.region.end })),
+          inherit_label: panel.querySelector('#inheritLabel')?.checked ?? false,
+          replace_in_folders: panel.querySelector('#replaceInFolders')?.checked ?? true,
+        }),
+      });
+      toast(`${res.created} clip${res.created === 1 ? '' : 's'} created — review their labels below`, 'success');
+      renderDetail(el, d.id);
+      el.scrollIntoView?.({ behavior: 'smooth' });
+    } catch (err) {
+      toast(err.message, 'error');
+      btn.disabled = false;
+    }
+  });
+
+  setMode('auto');
+}

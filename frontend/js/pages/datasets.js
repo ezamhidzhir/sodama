@@ -314,6 +314,13 @@ async function renderDatasetPage(el, id) {
     <a href="#/datasets" class="inline-flex items-center gap-1.5 text-sm text-ink-secondary hover:text-brand transition-colors mb-3">
       ${icon('arrowLeft', { size: 15 })} All datasets</a>
 
+    ${d.hidden_at ? `
+      <div class="bg-accent-tint/60 border border-accent/30 rounded-xl2 p-3 mb-4 text-sm text-accent-dark flex gap-2">
+        ${icon('alert', { size: 16 })}
+        <div>Hidden from Community after reports (${Object.entries(d.reports || {}).map(([k, n]) => `${esc(k)} ×${n}`).join(', ')}).
+          Remove the clips in question; the dataset returns once it is reviewed.</div>
+      </div>` : ''}
+
     <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">

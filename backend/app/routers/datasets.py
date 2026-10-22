@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import config, labels
+from .. import labels, media
 from ..auth import User, current_user
 from ..db import get_client
 
@@ -28,7 +28,10 @@ BASE_COLUMNS = [
     "duration_seconds", "sample_rate", "channels", "bit_depth", "audio_format",
     "file_size_bytes", "source", "device", "recorded_at", "uploaded_at",
     "location_name", "latitude", "longitude",
+    "recording_id", "clip_start_seconds", "clip_end_seconds",
+    "speech_removed_seconds", "edit_kind", "original_author", "original_license",
 ]
+EDITED = {"loop", "merge"}   # synthetic: repeated or stitched audio
 
 LICENSES = {
     "CC-BY-4.0": "Creative Commons Attribution 4.0",
@@ -114,7 +117,7 @@ def dataset_rows(client, dataset_id: str) -> list[dict]:
     items = (client.table("dataset_items")
              .select("added_at, audio_files(id, filename, duration, source, status, "
                      "uploaded_at, recorded_at, review_status, verified_label, label_origin, "
-                     "location_name)")
+                     "location_name, parent_id, clip_start, clip_end, edit_kind)")
              .eq("dataset_id", dataset_id).execute().data)
     rows = [{**i["audio_files"], "added_at": i["added_at"]}
             for i in items if i.get("audio_files")]
@@ -128,7 +131,8 @@ def dataset_rows(client, dataset_id: str) -> list[dict]:
 
 
 def exportable(rows: list[dict]) -> list[dict]:
-    return [r for r in rows if r["review_status"] != "rejected" and r["label"]]
+    return [r for r in rows if r["review_status"] != "rejected" and r["label"]
+            and r.get("edit_kind") not in EDITED]
 
 
 @router.post("/datasets", status_code=201, summary="Create a dataset (folder)")
@@ -161,6 +165,10 @@ def get_dataset(dataset_id: str, user: User = Depends(current_user)):
     dataset["exportable"] = len(exportable(rows))
     dataset["like_count"] = (client.table("dataset_likes").select("user_id", count="exact")
                              .eq("dataset_id", dataset_id).execute().count or 0)
+    # The owner sees why people reported it, never who.
+    dataset["reports"] = dict(Counter(r["reason"] for r in client.table("dataset_reports")
+                                      .select("reason").eq("dataset_id", dataset_id)
+                                      .execute().data))
     return dataset
 
 
@@ -226,34 +234,51 @@ def delete_dataset(dataset_id: str, user: User = Depends(current_user)):
     client.table("datasets").delete().eq("id", dataset_id).execute()
 
 
-def _stratified_split(labelled: list[tuple[str, str]], train_ratio: float,
+def _stratified_split(labelled: list[tuple[str, str, str]], train_ratio: float,
                       val_ratio: float, seed: str) -> dict[str, str]:
     """Assign every audio id to train / validation / test, balanced per class.
 
-    Stratified so a rare class does not land entirely in one split. Seeded from
-    the dataset id, so exporting the same dataset twice gives the same split —
-    without that, re-running an experiment silently changes the test set and the
-    accuracy numbers stop being comparable.
+    `labelled` is (audio_id, label, group). Clips cut from one recording share
+    a group, and a group always lands in a single split: otherwise a test clip
+    and a training clip could be neighbouring seconds of the same recording,
+    and test accuracy would measure memory instead of generalisation (data
+    leakage). A file that was never split is a group of its own.
+
+    Stratified so a rare class does not land entirely in one split — groups are
+    stratified by their most common label. Seeded from the dataset id, so
+    exporting the same dataset twice gives the same split; without that,
+    re-running an experiment silently changes the test set.
     """
+    groups: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for audio_id, label, group in labelled:
+        groups[group].append((audio_id, label))
+
     by_label: dict[str, list[str]] = defaultdict(list)
-    for audio_id, label in labelled:
-        by_label[label].append(audio_id)
+    for group, members in groups.items():
+        counts = Counter(label for _, label in members)
+        dominant = min(counts, key=lambda lb: (-counts[lb], lb))
+        by_label[dominant].append(group)
 
     test_ratio = max(0.0, 1.0 - train_ratio - val_ratio)
     val_share = val_ratio / (val_ratio + test_ratio) if (val_ratio + test_ratio) else 0.0
 
     out: dict[str, str] = {}
-    for label, ids in sorted(by_label.items()):
-        ids = sorted(ids)                       # stable order before shuffling
-        random.Random(f"{seed}:{label}").shuffle(ids)
+    for label, gs in sorted(by_label.items()):
+        gs = sorted(gs)                         # stable order before shuffling
+        random.Random(f"{seed}:{label}").shuffle(gs)
 
-        n = len(ids)
+        n = sum(len(groups[g]) for g in gs)
         n_train = min(n, max(1, round(n * train_ratio)))  # a lone example goes to train
         n_val = round((n - n_train) * val_share)
-        for i, audio_id in enumerate(ids):
-            out[audio_id] = ("train" if i < n_train
-                             else "validation" if i < n_train + n_val
-                             else "test")
+        # Each group goes where the most clips are still missing. Groups come in
+        # lumps (six clips of one recording), so filling train first could use
+        # them all up before test got any.
+        want = {"train": n_train, "validation": n_val, "test": n - n_train - n_val}
+        for g in gs:
+            split = max(want, key=want.get)        # ties: train, then validation
+            for audio_id, _ in groups[g]:
+                out[audio_id] = split
+            want[split] -= len(groups[g])
     return out
 
 
@@ -314,11 +339,38 @@ def _dataset_card(dataset: dict, rows: list[dict], skipped: list[tuple[str, str]
     lines += [f"| {name} | {n} |" for name, n in classes.most_common()]
     lines.append("")
 
+    split_clips = sum(1 for r in rows if r["clip_start_seconds"] != "")
+    if split_clips:
+        lines += ["## Clips cut from longer recordings", "",
+                  f"{split_clips} of {clips} were cut from longer recordings in SODAMA. "
+                  "`recording_id` names the recording each came from, and "
+                  "`clip_start_seconds` / `clip_end_seconds` where in it.", ""]
+
+    removed = sum(float(r["speech_removed_seconds"] or 0) for r in rows)
+    lines += ["## Privacy", "",
+              "Human speech was detected with YAMNet and muted before the audio was "
+              "stored, so these files should not contain voices"
+              + (f" ({removed:.0f} s were muted across this dataset)." if removed else ".")
+              + " Detection is automatic and not perfect — report anything that slipped "
+              "through to the dataset owner.", ""]
+
+    copies = [r for r in rows if r["original_author"]]
+    if copies:
+        lines += ["## Credits", "",
+                  "Some clips were saved from other people's public datasets. Their "
+                  "licences still apply — credit the original authors:", "",
+                  "| File | Original author | Licence |", "|---|---|---|"]
+        lines += [f"| {r['file_name']} | @{r['original_author']} | {r['original_license']} |"
+                  for r in copies]
+        lines.append("")
+
     if split:
         counts = Counter(r["split"] for r in rows)
         lines += ["## Splits", "",
                   "Stratified per class and seeded from the dataset id, so re-exporting "
-                  "reproduces the same partition.", "",
+                  "reproduces the same partition. Clips cut from the same recording are "
+                  "always kept in the same split, so the test set never contains seconds "
+                  "of a recording the model trained on.", "",
                   "| Split | Clips |", "|---|---:|"]
         lines += [f"| {s} | {counts[s]} |" for s in ("train", "validation", "test")]
         lines += ["", "`metadata.csv` carries a `split` column; `train.csv`, "
@@ -351,6 +403,11 @@ def _dataset_card(dataset: dict, rows: list[dict], skipped: list[tuple[str, str]
         "| `recorded_at` | When the sound was captured (falls back to upload time) |",
         "| `uploaded_at` | When the clip entered the system |",
         "| `location_name`, `latitude`, `longitude` | Where it was recorded, when the recordist shared it |",
+        "| `recording_id` | The recording this clip was cut from (its own id if it was never split) — clips sharing it are always in the same split |",
+        "| `clip_start_seconds`, `clip_end_seconds` | Where in that recording the clip sits; empty for whole recordings |",
+        "| `speech_removed_seconds` | Seconds muted by the privacy filter |",
+        "| `edit_kind` | `copy` = saved from another user's public dataset; empty for original audio |",
+        "| `original_author`, `original_license` | For copies: whose sound it is and its licence |",
         "| `meta_*` | Any custom metadata attached to the clip, e.g. `meta_notes` |",
         "",
         "## Loading", "",
@@ -372,6 +429,7 @@ def _dataset_card(dataset: dict, rows: list[dict], skipped: list[tuple[str, str]
 def build_export(client, dataset: dict, *, manifest_format: str = "both",
                  only_approved: bool = False, split: bool = True,
                  train_ratio: float = 0.7, val_ratio: float = 0.15,
+                 include_edited: bool = False,
                  public_author: str | None = None) -> StreamingResponse:
     """Bundle a dataset as a HuggingFace-compatible ZIP.
 
@@ -387,7 +445,8 @@ def build_export(client, dataset: dict, *, manifest_format: str = "both",
              .select("audio_files(id, filename, storage_path, duration, sample_rate, "
                      "file_size, source, uploaded_at, recorded_at, review_status, "
                      "verified_label, label_origin, reviewed_by, reviewed_at, device_id, "
-                     "latitude, longitude, location_name)")
+                     "latitude, longitude, location_name, parent_id, clip_start, clip_end, "
+                     "edit_kind, attribution, speech_removed_seconds)")
              .eq("dataset_id", dataset["id"]).execute().data)
     files = [i["audio_files"] for i in items if i.get("audio_files")]
     if not files:
@@ -405,6 +464,11 @@ def build_export(client, dataset: dict, *, manifest_format: str = "both",
               .in_("audio_file_id", ids).execute().data):
         custom_meta[m["audio_file_id"]][m["key"]] = m["value"]
 
+    parent_ids = list({f["parent_id"] for f in files if f.get("parent_id")})
+    parents = ({p["id"]: p for p in client.table("audio_files")
+                .select("id, storage_path, duration, filename, user_id")
+                .in_("id", parent_ids).execute().data} if parent_ids else {})
+
     is_public = public_author is not None
     keep_coords = not is_public or dataset.get("share_location")
 
@@ -419,6 +483,10 @@ def build_export(client, dataset: dict, *, manifest_format: str = "both",
             continue
         if not label:
             skipped.append((f["filename"], "no label — classification never produced a result"))
+            continue
+        if f.get("edit_kind") in EDITED and not include_edited:
+            skipped.append((f["filename"], f"edited audio ({f['edit_kind']}) — repeated or "
+                                           "stitched sound would inflate the dataset"))
             continue
 
         pred = predicted.get(f["id"])
@@ -454,8 +522,15 @@ def build_export(client, dataset: dict, *, manifest_format: str = "both",
             "location_name": f.get("location_name") or "",
             "latitude": f["latitude"] if keep_coords and f.get("latitude") is not None else "",
             "longitude": f["longitude"] if keep_coords and f.get("longitude") is not None else "",
+            "recording_id": f.get("parent_id") or f["id"],
+            "clip_start_seconds": f["clip_start"] if f.get("parent_id") else "",
+            "clip_end_seconds": f["clip_end"] if f.get("parent_id") else "",
+            "speech_removed_seconds": f.get("speech_removed_seconds") or 0,
+            "edit_kind": f.get("edit_kind") or "",
+            "original_author": (f.get("attribution") or {}).get("author", ""),
+            "original_license": (f.get("attribution") or {}).get("license", ""),
             **{f"meta_{k}": v for k, v in custom_meta.get(f["id"], {}).items()},
-            "_storage_path": f["storage_path"],
+            "_file": f,
         })
 
     if not rows:
@@ -468,7 +543,8 @@ def build_export(client, dataset: dict, *, manifest_format: str = "both",
 
     if split:
         assignment = _stratified_split(
-            [(r["audio_id"], r["label"]) for r in rows], train_ratio, val_ratio, dataset["id"])
+            [(r["audio_id"], r["label"], r["recording_id"]) for r in rows],
+            train_ratio, val_ratio, dataset["id"])
         for r in rows:
             r["split"] = assignment[r["audio_id"]]
 
@@ -485,7 +561,9 @@ def build_export(client, dataset: dict, *, manifest_format: str = "both",
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for r in rows:
-            data = client.storage.from_(config.AUDIO_BUCKET).download(r.pop("_storage_path"))
+            f = r.pop("_file")
+            data = media.wav_bytes(client, f, parents.get(f.get("parent_id")))
+            r["file_size_bytes"] = len(data)
             z.writestr(r["file_name"], data)
 
         if manifest_format in ("csv", "both"):
@@ -518,6 +596,7 @@ def export_dataset(
     split: bool = Query(True, description="Assign train/validation/test"),
     train_ratio: float = Query(0.7, ge=0.1, le=0.98),
     val_ratio: float = Query(0.15, ge=0.0, le=0.5),
+    include_edited: bool = Query(False, description="Also export looped / merged audio"),
     user: User = Depends(current_user),
 ):
     """Bundles the audio with a HuggingFace-compatible `metadata.csv`, a dataset
@@ -531,4 +610,5 @@ def export_dataset(
     dataset = get_owned_dataset(client, dataset_id, user)
     return build_export(client, dataset, manifest_format=manifest_format,
                         only_approved=only_approved, split=split,
-                        train_ratio=train_ratio, val_ratio=val_ratio)
+                        train_ratio=train_ratio, val_ratio=val_ratio,
+                        include_edited=include_edited)

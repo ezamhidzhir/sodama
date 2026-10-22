@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .routers import (audio_files, community, datasets, devices, ingest, profile,
+from .routers import (audio_files, community, datasets, devices, edits, ingest, profile,
                       recordings, stats, upload)
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
@@ -53,6 +53,7 @@ app.add_middleware(
 
 app.include_router(upload.router)
 app.include_router(recordings.router)
+app.include_router(edits.router)        # before audio_files: /audio/merge vs /audio/{id}
 app.include_router(audio_files.router)
 app.include_router(datasets.router)
 app.include_router(community.router)

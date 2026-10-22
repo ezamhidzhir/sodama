@@ -5,9 +5,9 @@
 import { api, download, qs } from '../api.js';
 import { icon } from '../icons.js';
 import { esc, fmtDuration, fmtHours, fmtDate, spinner, emptyState, toast, pageHeader, avatar,
-         playAudio, currentlyPlaying, labelSourceBadge, LICENSES, ROLES, SOURCE_LABEL, INPUT } from '../ui.js';
+         playAudio, currentlyPlaying, labelSourceBadge, sheet, LICENSES, ROLES, SOURCE_LABEL, INPUT } from '../ui.js';
 
-const state = { q: '', sort: 'popular', page: 1 };
+const state = { q: '', sort: 'popular', page: 1, tab: 'datasets' };
 const PER_PAGE = 24;
 
 const SORTS = [['popular', 'Popular'], ['newest', 'Newest'], ['likes', 'Most liked'], ['clips', 'Most clips']];
@@ -45,14 +45,21 @@ function card(d) {
 
 export async function renderCommunity(el) {
   el.innerHTML = `
-    ${pageHeader('Community', 'Labelled sound datasets shared by other trainers. Listen, then download a training-ready ZIP.')}
+    ${pageHeader('Community', 'Labelled sounds shared by other people. Download whole datasets, or find one sound and edit it.')}
+
+    <div class="flex gap-2 mb-3" id="cTabs">
+      ${[['datasets', 'Datasets', 'folder'], ['sounds', 'Single sounds', 'waveform']].map(([k, v, ic]) => `
+        <button data-tab="${k}" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full border text-sm transition-colors
+          ${k === state.tab ? 'bg-brand text-white border-brand' : 'bg-white border-line text-ink-secondary hover:border-brand hover:text-brand'}">
+          ${icon(ic, { size: 15 })} ${v}</button>`).join('')}
+    </div>
 
     <form id="cSearch" class="relative mb-3">
       <span class="absolute left-4 top-1/2 -translate-y-1/2 text-ink-muted pointer-events-none">${icon('search', { size: 17 })}</span>
       <input name="q" type="search" enterkeyhint="search" value="${esc(state.q)}"
-             placeholder="Search datasets or sound labels, e.g. motorcycle" class="${INPUT} pl-11">
+             placeholder="${state.tab === 'sounds' ? 'Find a sound, e.g. Porsche' : 'Search datasets or sound labels, e.g. motorcycle'}" class="${INPUT} pl-11">
     </form>
-    <div class="flex gap-2 mb-4 overflow-x-auto no-scrollbar -mx-3 px-3 sm:mx-0 sm:px-0" id="sorts">
+    <div class="${state.tab === 'sounds' ? 'hidden' : 'flex'} gap-2 mb-4 overflow-x-auto no-scrollbar -mx-3 px-3 sm:mx-0 sm:px-0" id="sorts">
       ${SORTS.map(([k, v]) => `
         <button data-sort="${k}" class="shrink-0 px-4 py-2 rounded-full border text-sm transition-colors
           ${k === state.sort ? 'bg-brand text-white border-brand' : 'bg-white border-line text-ink-secondary hover:border-brand hover:text-brand'}">${v}</button>`).join('')}
@@ -68,6 +75,10 @@ export async function renderCommunity(el) {
     load(el);
   });
   form.elements.q.addEventListener('search', () => { state.q = form.elements.q.value.trim(); state.page = 1; load(el); });
+  el.querySelectorAll('#cTabs [data-tab]').forEach((b) => b.addEventListener('click', () => {
+    state.tab = b.dataset.tab; state.page = 1;
+    renderCommunity(el);
+  }));
   el.querySelectorAll('#sorts [data-sort]').forEach((b) => b.addEventListener('click', () => {
     state.sort = b.dataset.sort; state.page = 1;
     renderCommunity(el);
@@ -76,6 +87,7 @@ export async function renderCommunity(el) {
 }
 
 async function load(el) {
+  if (state.tab === 'sounds') { loadSounds(el); return; }
   const box = el.querySelector('#cResults');
   box.innerHTML = spinner();
   const data = await api('/community/datasets' + qs({ q: state.q, sort: state.sort, page: state.page, per_page: PER_PAGE }));
@@ -137,7 +149,10 @@ export async function renderCommunityDataset(el, id) {
           ${d.liked ? 'border-[#C4452E]/40 text-[#C4452E] bg-[#C4452E]/5' : 'border-line text-ink-secondary hover:border-[#C4452E]/40 hover:text-[#C4452E]'}"
           ${d.is_owner ? 'disabled title="You cannot like your own dataset"' : ''} aria-pressed="${d.liked}">
           ${icon('heart', { size: 18, fill: d.liked })} <span id="likeCount">${d.like_count}</span></button>
-        ${d.is_owner ? `<a href="#/datasets/${d.id}" class="inline-flex items-center justify-center gap-2 rounded-full py-3 px-6 border border-line text-ink-secondary hover:border-brand hover:text-brand">${icon('pencil', { size: 16 })} Manage</a>` : ''}
+        ${d.is_owner ? `<a href="#/datasets/${d.id}" class="inline-flex items-center justify-center gap-2 rounded-full py-3 px-6 border border-line text-ink-secondary hover:border-brand hover:text-brand">${icon('pencil', { size: 16 })} Manage</a>` : `
+          <button id="reportBtn" class="inline-flex items-center justify-center gap-2 rounded-full py-3 px-5 border border-line text-ink-muted hover:border-accent hover:text-accent"
+                  ${d.reported_by_me ? 'disabled title="You reported this dataset"' : ''}>
+            ${icon('alert', { size: 16 })} ${d.reported_by_me ? 'Reported' : 'Report'}</button>`}
       </div>
       <div class="text-xs text-ink-muted mt-3 flex flex-wrap gap-x-4 gap-y-1">
         <span id="dlCount">${icon('download', { size: 12 })} ${d.download_count} download${d.download_count === 1 ? '' : 's'}</span>
@@ -184,6 +199,8 @@ export async function renderCommunityDataset(el, id) {
                 <div class="font-medium truncate">${esc(c.label)}</div>
                 <div class="text-xs text-ink-muted truncate">${fmtDuration(c.duration)} · ${fmtDate(c.recorded_at)}${c.location_name ? ` · ${esc(c.location_name)}` : ''}</div>
               </div>
+              <a href="#/sound/${c.id}" class="shrink-0 inline-flex items-center gap-1 text-xs border border-line rounded-full px-3 py-1.5 text-ink-secondary hover:border-brand hover:text-brand"
+                 title="Cut, label and save this sound to your library">${icon('pencil', { size: 12 })} Use</a>
             </div>`).join('')}
         </div>
       </div>
@@ -214,6 +231,8 @@ export async function renderCommunityDataset(el, id) {
     dl.innerHTML = label;
     dl.disabled = false;
   });
+
+  el.querySelector('#reportBtn')?.addEventListener('click', () => openReport(id, el));
 
   const like = el.querySelector('#likeBtn');
   let liked = d.liked, count = d.like_count;
@@ -263,4 +282,87 @@ export async function renderUserPage(el, username) {
     ${u.datasets.length
       ? `<div class="grid sm:grid-cols-2 xl:grid-cols-3 gap-3">${u.datasets.map(card).join('')}</div>`
       : `<div class="bg-white rounded-xl2 shadow-card">${emptyState('folder', 'No public datasets yet', u.is_me ? 'Publish one from its page under <a class="text-brand hover:underline" href="#/datasets">Datasets</a>' : '')}</div>`}`;
+}
+
+// ---------------------------------------------------------------- single sounds
+
+async function loadSounds(el) {
+  const box = el.querySelector('#cResults');
+  box.innerHTML = spinner();
+  const data = await api('/community/clips' + qs({ q: state.q, page: state.page }));
+  if (!data.items.length) {
+    box.innerHTML = `<div class="bg-white rounded-xl2 shadow-card">${emptyState('waveform',
+      state.q ? `No sounds labelled “${state.q}”` : 'No public sounds yet',
+      'Searches cover sound labels and dataset names')}</div>`;
+    return;
+  }
+  const pages = Math.max(1, Math.ceil(data.total / data.per_page));
+  box.innerHTML = `
+    <div class="text-xs text-ink-muted mb-2 px-1">${data.total} sound${data.total === 1 ? '' : 's'}</div>
+    <div class="bg-white rounded-xl2 shadow-card divide-y divide-line/60 px-3 sm:px-4">
+      ${data.items.map((c) => `
+        <div class="flex items-center gap-3 py-3">
+          <button class="sPlay w-10 h-10 rounded-full bg-page text-brand grid place-items-center shrink-0 hover:bg-brand hover:text-white"
+                  data-id="${c.id}" data-url="${esc(c.url || '')}" aria-label="Play ${esc(c.label)}">${icon('play', { size: 14, fill: true })}</button>
+          <div class="min-w-0 flex-1">
+            <div class="font-medium truncate">${esc(c.label)}</div>
+            <div class="text-xs text-ink-muted truncate">${fmtDuration(c.duration)} · @${esc(c.author)} ·
+              <a href="#/community/${c.dataset.id}" class="hover:text-brand">${esc(c.dataset.name)}</a>
+              ${c.license ? ` · ${esc(c.license)}` : ''}</div>
+          </div>
+          <a href="#/sound/${c.id}" class="shrink-0 inline-flex items-center gap-1.5 text-sm bg-brand text-white rounded-full px-4 py-2 hover:bg-brand-dark">
+            ${icon('pencil', { size: 14 })} <span class="hidden sm:inline">Edit &amp; save</span></a>
+        </div>`).join('')}
+    </div>
+    ${pages > 1 ? `
+      <div class="flex justify-center gap-2 mt-5">
+        <button id="cPrev" class="px-4 py-2.5 rounded-full border border-line bg-white disabled:opacity-40" ${state.page <= 1 ? 'disabled' : ''}>${icon('chevronLeft', { size: 15 })}</button>
+        <span class="px-3 py-2.5 text-sm text-ink-secondary">${state.page} / ${pages}</span>
+        <button id="cNext" class="px-4 py-2.5 rounded-full border border-line bg-white disabled:opacity-40" ${state.page >= pages ? 'disabled' : ''}>${icon('chevronRight', { size: 15 })}</button>
+      </div>` : ''}`;
+  const repaint = () => box.querySelectorAll('.sPlay').forEach((b) => {
+    const on = b.dataset.id === currentlyPlaying();
+    b.innerHTML = icon(on ? 'pause' : 'play', { size: 14, fill: !on });
+  });
+  box.querySelectorAll('.sPlay').forEach((b) => b.addEventListener('click', () => {
+    if (!b.dataset.url) { toast('This sound is unavailable', 'error'); return; }
+    playAudio(b.dataset.id, b.dataset.url, repaint);
+  }));
+  box.querySelector('#cPrev')?.addEventListener('click', () => { state.page--; loadSounds(el); window.scrollTo(0, 0); });
+  box.querySelector('#cNext')?.addEventListener('click', () => { state.page++; loadSounds(el); window.scrollTo(0, 0); });
+}
+
+// ---------------------------------------------------------------- report
+
+const REASONS = [
+  ['voices', 'Contains people talking'],
+  ['copyright', 'Copyrighted audio (music, film…)'],
+  ['offensive', 'Offensive or harmful'],
+  ['spam', 'Spam or not real data'],
+  ['other', 'Something else'],
+];
+
+function openReport(id, el) {
+  const { el: box, close } = sheet('Report this dataset', `
+    <form id="reportForm" class="space-y-3">
+      <p class="text-sm text-ink-muted">Reports are anonymous to the owner. After several reports the dataset is hidden from Community until it is reviewed.</p>
+      ${REASONS.map(([k, v], i) => `
+        <label class="flex items-center gap-2.5 text-sm"><input type="radio" name="reason" value="${k}" ${i === 0 ? 'checked' : ''}> ${v}</label>`).join('')}
+      <input name="note" maxlength="300" placeholder="Details (optional)" class="${INPUT}">
+      <button class="w-full bg-accent text-white rounded-full py-3 font-medium hover:opacity-90">Send report</button>
+    </form>`);
+  box.querySelector('#reportForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    try {
+      const res = await api(`/community/datasets/${id}/report`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: f.reason, note: f.note || null }),
+      });
+      close();
+      toast(res.hidden ? 'Thanks — the dataset is now hidden pending review' : 'Thanks — report sent', 'success');
+      const b = el.querySelector('#reportBtn');
+      if (b) { b.disabled = true; b.innerHTML = `${icon('alert', { size: 16 })} Reported`; }
+    } catch (err) { toast(err.message, 'error'); }
+  });
 }

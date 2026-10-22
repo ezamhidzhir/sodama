@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 
-from .. import config
+from .. import clips, config
 from ..auth import USERNAME_RE, User, _profiled, current_user, forget_token
 from ..db import get_client
 from .ingest import discard_pending_chunks
@@ -86,6 +86,11 @@ def get_me(user: User = Depends(current_user)):
             "downloads_received": sum(d["download_count"] for d in public),
             "likes_received": likes or 0,
         },
+        "quota": {
+            **clips.quota(client, user.id),
+            "max_upload_seconds": config.MAX_UPLOAD_SECONDS,
+            "max_recording_seconds": config.MAX_RECORDING_SECONDS,
+        },
     }
 
 
@@ -154,7 +159,7 @@ def delete_me(body: DeleteAccount, user: User = Depends(current_user),
         raise HTTPException(400, "type your username exactly to confirm")
 
     paths = [r["storage_path"] for r in client.table("audio_files").select("storage_path")
-             .eq("user_id", user.id).execute().data]
+             .eq("user_id", user.id).execute().data if r["storage_path"]]  # clips own none
     for i in range(0, len(paths), 100):
         client.storage.from_(config.AUDIO_BUCKET).remove(paths[i:i + 100])
     if profile.get("avatar_path"):

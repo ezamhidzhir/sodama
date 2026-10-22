@@ -23,11 +23,11 @@ import uuid
 from datetime import datetime, timezone
 
 import numpy as np
-from fastapi import (APIRouter, BackgroundTasks, Header, HTTPException, Path, Query,
-                     Request, Response)
+from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from postgrest.exceptions import APIError
 
-from .. import audio, clips, config
+from .. import audio, clips, config, privacy
 from ..db import get_client
 
 router = APIRouter(tags=["ingest"])
@@ -149,7 +149,6 @@ def _touch(client, device: dict) -> None:
 async def ingest(
     request: Request,
     response: Response,
-    background: BackgroundTasks,
     x_api_key: str = Header(..., description="Device api_key from the devices table"),
     x_client_id: str | None = Header(
         None, description="UUID the client gave this recording — makes retries safe"),
@@ -210,15 +209,21 @@ async def ingest(
             return _receipt(response, duplicate=True, audio_id=prior["id"],
                             duration=prior["duration"], **receipt)
 
-    waveform = _decode(raw, request.headers.get("content-type", ""), sample_rate)
+    declared = audio.duration_of(raw)
+    if declared is not None:
+        clips.check_length(declared, config.MAX_UPLOAD_SECONDS, "this recording")
+    waveform = await run_in_threadpool(
+        _decode, raw, request.headers.get("content-type", ""), sample_rate)
     if waveform.size == 0:
         raise HTTPException(400, "audio contains no samples")
     recorded_at = _recorded_at(x_recorded_at)
     duration = round(waveform.size / audio.SAMPLE_RATE, 3)
+    clips.check_length(duration, config.MAX_UPLOAD_SECONDS, "this recording")
 
     if joining:
-        receipt_out = _store_chunk(client, session_id, chunk_index, client_id, sha256,
-                                   waveform, duration, recorded_at, device, response, receipt)
+        receipt_out = await run_in_threadpool(
+            _store_chunk, client, session_id, chunk_index, client_id, sha256,
+            waveform, duration, recorded_at, device, response, receipt)
         _touch(client, device)
         return receipt_out
 
@@ -226,8 +231,8 @@ async def ingest(
     stamp = recorded_at.strftime("%Y%m%d_%H%M%S")
     part = f"_part{chunk_index:03d}" if session else ""
     try:
-        row = clips.create_clip(
-            client, background, waveform=waveform, user_id=device.get("user_id"),
+        row = await run_in_threadpool(
+            clips.create_clip, client, waveform=waveform, user_id=device.get("user_id"),
             filename=f"{name}_{stamp}{part}.wav", source="device", folder=_device_folder(device),
             extra={"device_id": device["id"], "recorded_at": recorded_at.isoformat(),
                    "client_id": client_id, "sha256": sha256,
@@ -249,15 +254,23 @@ async def ingest(
 
 def _store_chunk(client, session_id, chunk_index, client_id, sha256, waveform, duration,
                  recorded_at, device, response, receipt) -> dict:
-    """A chunk of a join session: stored as standard WAV, kept out of the Library."""
-    path = f"{_device_folder(device)}/sessions/{session_id}/{chunk_index:05d}.wav"
+    """A chunk of a join session: speech muted, stored as FLAC, kept out of the
+    Library. Counts against the owner's quota together with the session's other
+    waiting chunks, since the joined recording will."""
+    pending = (client.table("ingest_chunks").select("duration, ingest_sessions!inner(device_id)")
+               .eq("ingest_sessions.device_id", device["id"]).execute().data)
+    clips.ensure_quota(client, device.get("user_id"),
+                       duration + sum(c["duration"] for c in pending))
+    safe = privacy.filter_speech(waveform)
+    path = f"{_device_folder(device)}/sessions/{session_id}/{chunk_index:05d}.flac"
     bucket = client.storage.from_(config.AUDIO_BUCKET)
-    bucket.upload(path, audio.to_wav_bytes(waveform),
-                  {"content-type": "audio/wav", "upsert": "true"})
+    bucket.upload(path, audio.to_flac_bytes(safe.waveform),
+                  {"content-type": "audio/flac", "upsert": "true"})
     try:
         client.table("ingest_chunks").insert({
             "session_id": session_id, "chunk_index": chunk_index, "client_id": client_id,
             "sha256": sha256, "storage_path": path, "duration": duration,
+            "privacy_redactions": safe.redactions,
             "recorded_at": recorded_at.isoformat(),
         }).execute()
     except APIError as e:
@@ -273,7 +286,6 @@ def _store_chunk(client, session_id, chunk_index, client_id, sha256, waveform, d
 @router.post("/ingest/sessions/{session_id}/close",
              summary="Finish a stream session; joins its chunks when it was started with join=true")
 def close_session(
-    background: BackgroundTasks,
     session_id: str = Path(..., description="The session's UUID"),
     x_api_key: str = Header(...),
     chunks: int | None = Query(None, ge=1, description=(
@@ -321,16 +333,22 @@ def close_session(
 
     bucket = client.storage.from_(config.AUDIO_BUCKET)
     try:
-        waveform = np.concatenate(
-            [audio.decode_to_standard(bucket.download(p["storage_path"])) for p in parts])
+        pieces = [audio.decode_to_standard(bucket.download(p["storage_path"])) for p in parts]
+        waveform = np.concatenate(pieces)
+        # What each chunk had muted on arrival, shifted to its place in the join.
+        muted, offset = [], 0.0
+        for p, piece in zip(parts, pieces):
+            muted += [[s + offset, e + offset] for s, e in p.get("privacy_redactions") or []]
+            offset += piece.size / audio.SAMPLE_RATE
         first = _recorded_at(parts[0]["recorded_at"])
         name = clips.safe_stem(device["device_name"], "device")
         row = clips.create_clip(
-            client, background, waveform=waveform, user_id=device.get("user_id"),
+            client, waveform=waveform, user_id=device.get("user_id"),
             filename=f"{name}_{first.strftime('%Y%m%d_%H%M%S')}.wav", source="device",
             folder=_device_folder(device),
             extra={"device_id": device["id"], "recorded_at": first.isoformat(),
-                   "session_id": session_id})
+                   "session_id": session_id},
+            muted_before=muted)
     except Exception:
         client.table("ingest_sessions").update({"status": "open"}).eq("id", session_id).execute()
         raise

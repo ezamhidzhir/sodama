@@ -85,6 +85,12 @@ Supabase and scopes every query to that user's own rows.
 | `GET /audio` | List/search: pagination, `class_name`, `min_confidence`, `source`, `status`, `review_status`, date range |
 | `GET /audio/{id}` | Detail: waveform peaks, per-window classifications, top classes, signed download URL |
 | `PATCH /audio/{id}/review` | Approve, correct or reject a label |
+| `POST /audio/{id}/segments` | Preview where a recording would be cut (`auto` / `fixed`) |
+| `POST /audio/{id}/clips` | Cut a recording into virtual clips |
+| `GET /audio/{id}/file` | WAV of any item (incl. clips) through a signed link |
+| `POST /audio/{id}/loop`, `POST /audio/merge` | Extend a sound by looping; join several sounds |
+| `GET /community/clips` (+ `/{id}`, `/{id}/save`) | Search single public sounds; save a credited copy |
+| `POST /community/datasets/{id}/report` | Report a dataset; three reports hide it |
 | `POST /audio/review` | Same verdict applied to many files at once |
 | `POST /datasets` + `/items` | Curate datasets (folders; many-to-many with audio files) with a class list |
 | `PATCH /datasets/{id}` | Edit, or publish to Community (`visibility`, `license`, `share_location`) |
@@ -100,6 +106,58 @@ Supabase and scopes every query to that user's own rows.
 Classification runs as a FastAPI background task: `audio_files.status` goes
 `pending → processing → done` (or `error`), and per-0.96s-window top-3 YAMNet
 classes land in the `classifications` table.
+
+## Limits and storage
+
+| | Limit |
+|---|---|
+| Upload | 10 minutes per file (checked from the file header before decoding) |
+| Recording in the app | 5 minutes per take |
+| Device chunk | 10 minutes |
+| Storage per user | 30 minutes of stored audio (`profiles.quota_seconds`) |
+
+Audio is stored as **FLAC** — the same 16 kHz 16-bit samples as WAV, losslessly
+compressed to roughly half the size. Downloads and exports are always WAV. Clips
+cut from a recording are virtual and use no storage or quota.
+
+## Privacy: human speech is muted before storage
+
+Every recording, upload and device clip passes through YAMNet *before* it is
+stored. Windows where a speech class (Speech, Conversation, Narration, Whispering,
+Shout, Chatter, Hubbub …) scores ≥ 0.3 are muted, with 0.5 s padding either side,
+and only the muted audio is written to Supabase. `privacy_redactions` records the
+muted stretches and the player shades them. An upload or recording that is ≥ 80 %
+speech is refused; a device keeps the muted version so its receipt flow is not
+broken. Detection is best effort — Community has a Report button for anything
+that slips through.
+
+## Splitting recordings into clips
+
+A long recording with several sounds is cut into short clips that each get
+their own label and review — the step that turns "a recording" into training
+data. On the audio page, **Split into clips** offers three ways to cut:
+
+- **Follow the sound** — cut where YAMNet's top class changes; stretches shorter
+  than a minimum fold into a neighbour, and silence can be left out
+- **Every N seconds** — equal-length clips, what most models train on
+- **Select by hand** — drag on the waveform
+
+Clips are virtual (`parent_id`, `clip_start`, `clip_end`): no audio is copied and
+no audio is re-analysed — each clip takes the recording's classification windows
+that fall inside it. Clips replace the recording in its folders so an export
+never holds the same audio twice, and **clips from one recording always land in
+the same train/validation/test split**, so test accuracy is never measured on
+seconds the model trained on.
+
+## Editing sounds
+
+**Edit** on any sound (or **Use** on a Community sound) opens the editor: select
+a stretch, label it, and optionally **make it longer by looping** it with a short
+crossfade. The Library's **Merge** joins several selected sounds. Looped and
+merged audio is marked `edit_kind` and left out of exports unless
+`include_edited=true` — repeated audio would make a dataset look bigger than the
+sound it holds. A sound saved from someone else's public dataset keeps the
+author and licence in `attribution`, and exports credit them.
 
 ## Sending audio from a device
 
@@ -153,6 +211,10 @@ A recorded clip arrives already labelled and approved with
 `label_source = human_annotated`; YAMNet still classifies it as a sanity check.
 
 ## Accounts, profiles and password reset
+
+**Continue with Google** signs in or signs up in one step through Supabase's
+Google provider (Authentication → Providers → Google, with the app's URL in
+*Redirect URLs*). Google accounts need no email confirmation.
 
 Each user sees only their own audio, datasets and devices. Profiles
 (`profiles` table) hold a public username, name, role, organisation, bio and

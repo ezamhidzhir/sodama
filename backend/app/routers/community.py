@@ -10,10 +10,13 @@ response is built for a stranger: usernames instead of emails, and no precise
 coordinates unless the owner chose to share them.
 """
 from collections import Counter
+from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
-from .. import config
+from .. import config, media
 from ..auth import User, current_user
 from ..db import get_client
 from .datasets import LICENSES, build_export, dataset_rows, exportable
@@ -23,6 +26,14 @@ router = APIRouter(prefix="/community", tags=["community"])
 
 SAMPLE_LIMIT = 60
 SIGNED_URL_TTL = 3600
+# Distinct people reporting a dataset before it leaves the catalogue. It stays
+# hidden until someone clears `datasets.hidden_at` in the Supabase dashboard.
+REPORT_HIDE_THRESHOLD = 3
+
+
+class Report(BaseModel):
+    reason: Literal["voices", "copyright", "offensive", "spam", "other"]
+    note: str | None = Field(None, max_length=300)
 
 
 def _card(item: dict) -> dict:
@@ -34,9 +45,13 @@ def _card(item: dict) -> dict:
 def _public_dataset(client, dataset_id: str, user: User) -> dict:
     """A public dataset — or the caller's own, so owners can preview theirs."""
     rows = client.table("datasets").select("*").eq("id", dataset_id).execute().data
-    if not rows or (rows[0]["visibility"] != "public" and rows[0]["user_id"] != user.id):
+    if not rows:
         raise HTTPException(404, "dataset not found or not public")
-    return rows[0]
+    d = rows[0]
+    listed = d["visibility"] == "public" and d.get("hidden_at") is None
+    if not listed and d["user_id"] != user.id:
+        raise HTTPException(404, "dataset not found or not public")
+    return d
 
 
 def _owner(client, user_id: str) -> dict:
@@ -67,16 +82,18 @@ def dataset_detail(dataset_id: str, user: User = Depends(current_user)):
              .execute().data)
     samples = rows[:SAMPLE_LIMIT]
 
-    # Signed URLs in one call for the sample player.
+    # Signed URLs in one call for the stored files; clips get a signed backend link.
     urls: dict[str, str] = {}
     if samples:
         paths = {r["id"]: r["storage_path"] for r in client.table("audio_files")
                  .select("id, storage_path").in_("id", [s["id"] for s in samples])
                  .execute().data}
-        signed = client.storage.from_(config.AUDIO_BUCKET).create_signed_urls(
-            list(paths.values()), SIGNED_URL_TTL)
+        stored = [p for p in paths.values() if p]
+        signed = (client.storage.from_(config.AUDIO_BUCKET).create_signed_urls(
+            stored, SIGNED_URL_TTL) if stored else [])
         by_path = {s.get("path"): s.get("signedURL") or s.get("signedUrl") for s in signed}
-        urls = {aid: by_path.get(path) for aid, path in paths.items()}
+        urls = {aid: by_path.get(path) if path else media.file_link(aid)
+                for aid, path in paths.items()}
 
     return {
         "id": d["id"], "name": d["name"], "description": d["description"],
@@ -86,6 +103,9 @@ def dataset_detail(dataset_id: str, user: User = Depends(current_user)):
         "updated_at": d["updated_at"], "download_count": d["download_count"],
         "share_location": d["share_location"],
         "is_owner": d["user_id"] == user.id,
+        "reported_by_me": bool(client.table("dataset_reports").select("user_id")
+                               .eq("dataset_id", dataset_id).eq("user_id", user.id)
+                               .execute().data),
         "like_count": len(likes),
         "liked": any(l["user_id"] == user.id for l in likes),
         "owner": public_profile(_owner(client, d["user_id"])),
@@ -142,6 +162,29 @@ def download(dataset_id: str,
         client.table("datasets").update({"download_count": d["download_count"] + 1}) \
             .eq("id", dataset_id).execute()
     return response
+
+
+@router.post("/datasets/{dataset_id}/report", status_code=201,
+             summary="Report a public dataset (voices, copyright, offensive, spam)")
+def report(dataset_id: str, body: Report, user: User = Depends(current_user)):
+    """One report per person per dataset (a second one replaces the first).
+    Enough distinct reports hide the dataset from Community until it is
+    reviewed — a privacy filter can miss things, so people get a way to flag
+    them."""
+    client = get_client()
+    d = _public_dataset(client, dataset_id, user)
+    if d["user_id"] == user.id:
+        raise HTTPException(400, "you cannot report your own dataset")
+    client.table("dataset_reports").upsert({
+        "dataset_id": dataset_id, "user_id": user.id, "reason": body.reason,
+        "note": (body.note or "").strip() or None,
+    }, on_conflict="dataset_id,user_id").execute()
+    n = (client.table("dataset_reports").select("user_id", count="exact")
+         .eq("dataset_id", dataset_id).execute().count or 0)
+    hidden = n >= REPORT_HIDE_THRESHOLD
+    if hidden and not d.get("hidden_at"):
+        client.table("datasets").update({"hidden_at": datetime.now(timezone.utc).isoformat()})             .eq("id", dataset_id).execute()
+    return {"reported": True, "hidden": hidden}
 
 
 @router.get("/users/{username}", summary="A contributor's public profile and datasets")

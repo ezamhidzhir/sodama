@@ -365,6 +365,9 @@ export async function renderRecord(el) {
         <div class="w-16 h-16 rounded-full bg-brand-tint text-brand grid place-items-center mx-auto">${icon('checkCircle', { size: 30 })}</div>
         <div class="font-semibold text-lg mt-3">Saved${s.verified_label ? ` as “${esc(s.verified_label)}”` : ''}</div>
         <div class="text-sm text-ink-muted mt-1">${s.dataset ? `In ${esc(s.dataset.name)} · ` : ''}${fmtDuration(s.duration)}${s.location_name ? ` · ${esc(s.location_name)}` : ''}</div>
+        ${s.speech_removed_seconds > 0 ? `
+          <div class="text-xs text-ink-muted mt-2 inline-flex items-center gap-1.5">${icon('lock', { size: 12 })}
+            ${Math.round(s.speech_removed_seconds)} s of human speech was muted for privacy</div>` : ''}
         <div id="yamnet" class="mt-4 text-sm bg-page rounded-xl2 px-4 py-3 inline-flex items-center gap-2 text-ink-secondary">
           ${icon('gear', { size: 15 })} YAMNet is listening to it…</div>
         <button id="nextBtn" class="mt-5 w-full inline-flex items-center justify-center gap-2 bg-brand text-white rounded-full py-3.5 font-semibold hover:bg-brand-dark">
@@ -483,7 +486,7 @@ export async function renderRecord(el) {
         const bar = el.querySelector('#saveBar');
         if (!bar) return;
         bar.style.width = `${pct}%`;
-        el.querySelector('#savePct').textContent = pct < 100 ? `Uploading ${pct}%` : 'Processing on the server…';
+        el.querySelector('#savePct').textContent = pct < 100 ? `Uploading ${pct}%` : 'Muting any voices and classifying…';
       });
       if (state.label) {
         state.lastLabel = row.verified_label || state.label;

@@ -6,10 +6,13 @@ call, and the review panel and the dataset export MUST make it the same way —
 otherwise a trainer approves "Pump (liquid)" and the manifest ships something
 else. Both call through here.
 
-Mean confidence across the windows a class appears in is the rule: it favours a
-class that is moderately confident throughout over one that spikes in a single
-window. (`GET /audio` ranks by peak confidence instead — that column is a
-browsing hint, not the label of record.)
+The rule is mean confidence over **every** window of the file, counting a
+window where the class was not among the kept predictions as 0. A class
+therefore scores high only when it is both confident and present for most of
+the file. (Averaging only over the windows a class appears in — the earlier
+rule — let one loud dog bark in a 60 s car recording outrank the car.)
+`GET /audio` ranks by peak confidence instead — that column is a browsing
+hint, not the label of record.
 """
 from collections import defaultdict
 
@@ -19,27 +22,40 @@ CHUNK = 200  # keep the PostgREST `in.(...)` filter inside URL length limits
 LABEL_SOURCES = ("human_annotated", "human_confirmed", "human_corrected", "auto")
 
 
+def class_ranking(rows: list[dict]) -> list[dict]:
+    """Classes of one file, best first: mean confidence over all of its windows,
+    plus how many windows each class was predicted in."""
+    windows = {r["window_start"] for r in rows}
+    if not windows:
+        return []
+    by_class: dict[str, list[float]] = defaultdict(list)
+    for r in rows:
+        by_class[r["class_name"]].append(r["confidence"])
+    ranked = [{"class_name": name, "mean_confidence": round(sum(v) / len(windows), 4),
+               "windows": len(v)} for name, v in by_class.items()]
+    return sorted(ranked, key=lambda x: (-x["mean_confidence"], x["class_name"]))
+
+
 def predicted_labels(client, audio_ids: list[str]) -> dict[str, tuple[str, float]]:
-    """Map audio_file_id -> (top class by mean confidence, that mean).
+    """Map audio_file_id -> (top class by `class_ranking`, its score).
 
     Files with no classification rows are simply absent from the result.
     """
     if not audio_ids:
         return {}
 
-    per_file: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    per_file: dict[str, list[dict]] = defaultdict(list)
     for i in range(0, len(audio_ids), CHUNK):
         rows = (client.table("classifications")
-                .select("audio_file_id, class_name, confidence")
+                .select("audio_file_id, class_name, confidence, window_start")
                 .in_("audio_file_id", audio_ids[i:i + CHUNK]).execute().data)
         for r in rows:
-            per_file[r["audio_file_id"]][r["class_name"]].append(r["confidence"])
+            per_file[r["audio_file_id"]].append(r)
 
     out: dict[str, tuple[str, float]] = {}
-    for file_id, classes in per_file.items():
-        means = {name: sum(v) / len(v) for name, v in classes.items()}
-        top = max(means, key=means.get)
-        out[file_id] = (top, round(means[top], 4))
+    for file_id, rows in per_file.items():
+        top = class_ranking(rows)[0]
+        out[file_id] = (top["class_name"], top["mean_confidence"])
     return out
 
 

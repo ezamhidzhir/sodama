@@ -9,6 +9,7 @@ audio_files 1 ──< classifications      (per-window YAMNet results)
 audio_files 1 ──< metadata             (flexible key-value tags, e.g. notes)
 datasets    >──< audio_files           (via dataset_items, many-to-many)
 datasets    >──< auth.users            (via dataset_likes — Community likes)
+audio_files 1 ──< audio_files          (virtual clips, parent_id)
 devices     1 ──< audio_files          (device clips, device_id)
 devices     1 ──< ingest_sessions 1 ──< ingest_chunks   (stream mode)
 ```
@@ -22,7 +23,7 @@ One row per audio file (in-app recording, manual upload, or a registered device)
 |---|---|---|
 | id | uuid PK | `gen_random_uuid()` |
 | filename | text | original filename, or `<label>_<timestamp>.wav` for recordings |
-| storage_path | text unique | path in `audio-files` bucket |
+| storage_path | text unique, nullable | path in `audio-files` bucket (`.flac` since Fasa 6b); NULL for a virtual clip |
 | duration | double | seconds |
 | sample_rate | int | Hz — target 16000 |
 | file_size | bigint | bytes |
@@ -43,6 +44,11 @@ One row per audio file (in-app recording, manual upload, or a registered device)
 | client_id | uuid | recording id chosen by the sending device; unique per `device_id` → retries are idempotent |
 | sha256 | text | hash of the uploaded body, echoed in the receipt |
 | session_id, chunk_index | uuid, int | stream mode; `chunk_index` only on unjoined chunks, unique per session |
+| parent_id, clip_start, clip_end | uuid FK → audio_files, double | a **virtual clip**: seconds of its parent; no `storage_path` of its own; cascades with the parent |
+| edit_kind | text | `loop` \| `merge` \| `copy` — stored edits; loops/merges are excluded from exports by default |
+| derived_from | uuid[] | sources of an edit |
+| attribution | jsonb | for copies of public sounds: author, licence, dataset, source id, stretch |
+| speech_removed_seconds, privacy_redactions | real, jsonb | what the privacy filter muted before storage: total and `[[start, end], …]` |
 
 ### classifications
 YAMNet classifies per 0.96s window (hop 0.48s) — one row per window per class kept.
@@ -86,11 +92,20 @@ Registry of recording clients (ESP32, a script on a laptop, ...): `user_id`
 (owner), `device_name` (unique per owner), `api_key` (unique — authenticates
 `/ingest`), `last_seen`. No RLS policies → service-role (backend) access only.
 
+### dataset_reports
+Community reports: PK `(dataset_id, user_id)`, `reason` (`voices` / `copyright` /
+`offensive` / `spam` / `other`), `note`. Three distinct reporters set
+`datasets.hidden_at`, which removes the dataset from `community_datasets()` and
+the clip search until someone clears it. RLS on, no policies (backend only).
+
+`profiles.quota_seconds` (default 1800) caps the seconds of *stored* audio a user
+keeps; virtual clips do not count.
+
 ### ingest_sessions / ingest_chunks
 Stream mode. A session (`id` chosen by the client) starts with its first chunk:
 `device_id`, `user_id`, `join_chunks`, `status` (`open` → `joining` → `closed`),
 `audio_file_id` (the joined recording). Chunks of a `join_chunks` session wait
-in `ingest_chunks` (PK `session_id, chunk_index`; `sha256`, `storage_path`,
+in `ingest_chunks` (PK `session_id, chunk_index`; `sha256`, `storage_path`, `privacy_redactions`,
 `duration`, `recorded_at`) — outside the Library — until the session closes and
 they are stitched into one `audio_files` row, then deleted. RLS on, no policies.
 

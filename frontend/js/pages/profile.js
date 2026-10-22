@@ -4,7 +4,7 @@ import { api, upload } from '../api.js';
 import { verifyPassword, updatePassword, signOutLocal } from '../auth.js';
 import { icon } from '../icons.js';
 import { loadMe, setMe } from '../me.js';
-import { esc, fmtDate, toast, pageHeader, avatar, spinner, ROLES, INPUT, TEXTAREA } from '../ui.js';
+import { esc, fmtDate, toast, pageHeader, avatar, spinner, quotaBar, ROLES, INPUT, TEXTAREA } from '../ui.js';
 
 const label = (text, forId, extra = '') =>
   `<label for="${forId}" class="block text-sm font-medium text-ink-secondary mb-1.5">${text}${extra}</label>`;
@@ -43,6 +43,8 @@ export async function renderProfile(el) {
              ['Public', st.public_datasets], ['Downloads', st.downloads_received], ['Likes', st.likes_received]]
             .map(([k, v]) => `<div class="bg-page rounded-xl2 py-2.5 text-center"><div class="font-bold">${v}</div><div class="text-[10px] uppercase tracking-wider text-ink-muted">${k}</div></div>`).join('')}
         </div>
+        <div class="mt-4 border border-line rounded-xl2">${quotaBar(p.quota)}</div>
+        ${p.quota ? `<p class="text-xs text-ink-muted mt-2">Uploads up to ${p.quota.max_upload_seconds / 60} min each · recordings up to ${p.quota.max_recording_seconds / 60} min each. Clips you cut from a recording use no extra storage.</p>` : ''}
         <div class="text-xs text-ink-muted mt-3">Member since ${fmtDate(p.joined_at)}</div>
       </div>
 

@@ -8,9 +8,10 @@ check — a "Honda" clip that YAMNet hears as "Speech" is worth a second listen.
 """
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 
-from .. import audio, clips, labels
+from .. import audio, clips, config, labels
 from ..auth import User, current_user
 from ..db import get_client
 from .datasets import attach_to_dataset, get_owned_dataset
@@ -40,7 +41,6 @@ def _parse_time(value: str | None) -> str:
 @router.post("/recordings", status_code=201,
              summary="Save a clip recorded in the app, with its label and capture metadata")
 async def create_recording(
-    background: BackgroundTasks,
     file: UploadFile = File(..., description="The recording (WAV preferred)"),
     label: str | None = Form(None, max_length=60, description="What the sound is, e.g. Honda"),
     dataset_id: str | None = Form(None, description="Folder (dataset) to save it into"),
@@ -60,11 +60,13 @@ async def create_recording(
     if len(raw) > clips.MAX_BYTES:
         raise HTTPException(413, "recording exceeds 50 MB")
     try:
-        waveform = audio.decode_to_standard(raw)
+        waveform = await run_in_threadpool(audio.decode_to_standard, raw)
     except Exception:
         raise HTTPException(400, "could not decode the recording")
     if waveform.size < MIN_SECONDS * audio.SAMPLE_RATE:
         raise HTTPException(400, f"recording is shorter than {MIN_SECONDS} s")
+    clips.check_length(waveform.size / audio.SAMPLE_RATE, config.MAX_RECORDING_SECONDS,
+                       "this recording")
     if (latitude is None) != (longitude is None):
         raise HTTPException(400, "send latitude and longitude together")
 
@@ -74,11 +76,6 @@ async def create_recording(
     clean_label = None
     if label and label.strip():
         clean_label = labels.canonical_label(label, (dataset or {}).get("labels") or [])
-        # A new class typed while recording joins the folder's class list, so the
-        # next recording offers it as a one-tap choice.
-        if dataset is not None and clean_label not in dataset["labels"]:
-            client.table("datasets").update({"labels": dataset["labels"] + [clean_label]}) \
-                .eq("id", dataset["id"]).execute()
 
     captured = _parse_time(recorded_at)
     stamp = datetime.fromisoformat(captured).strftime("%Y%m%d_%H%M%S")
@@ -98,10 +95,11 @@ async def create_recording(
             "reviewed_at": clips.now_iso(),
         })
 
-    row = clips.create_clip(
-        client, background, waveform=waveform, user_id=user.id,
+    row = await run_in_threadpool(
+        clips.create_clip, client, waveform=waveform, user_id=user.id,
         filename=f"{clips.safe_stem(clean_label or '', 'recording')}_{stamp}.wav",
-        source="recording", folder=f"recordings/{user.id}", extra=extra)
+        source="recording", folder=f"recordings/{user.id}", extra=extra,
+        reject_mostly_speech=True)
 
     meta = {"notes": (notes or "").strip(), "recording_device": (recording_device or "").strip()}
     meta_rows = [{"audio_file_id": row["id"], "key": k, "value": v} for k, v in meta.items() if v]
@@ -110,5 +108,11 @@ async def create_recording(
 
     if dataset is not None:
         attach_to_dataset(client, user, dataset["id"], [row["id"]])
+        # A new class typed while recording joins the folder's class list, so the
+        # next recording offers it as a one-tap choice. Only once the clip is
+        # saved — a recording refused by the privacy filter adds nothing.
+        if clean_label and clean_label not in dataset["labels"]:
+            client.table("datasets").update({"labels": dataset["labels"] + [clean_label]}) \
+                .eq("id", dataset["id"]).execute()
 
     return {**row, "dataset": {"id": dataset["id"], "name": dataset["name"]} if dataset else None}

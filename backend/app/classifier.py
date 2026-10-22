@@ -48,16 +48,30 @@ def load_model():
     return _model, _class_names
 
 
+def scores(waveform: np.ndarray) -> np.ndarray:
+    """YAMNet's full output: one row per window, one column per class (521)."""
+    model, _ = load_model()
+    return model(waveform)[0].numpy()
+
+
+def class_names() -> list[str]:
+    return load_model()[1]
+
+
 def classify(waveform: np.ndarray, top_k: int = 3,
              min_confidence: float = 0.1) -> list[dict]:
-    """Run YAMNet over the waveform; return per-window top-k class dicts.
+    """Run YAMNet over the waveform; return per-window top-k class dicts."""
+    return rows_from_scores(scores(waveform), top_k, min_confidence)
+
+
+def rows_from_scores(scores: np.ndarray, top_k: int = 3,
+                     min_confidence: float = 0.1) -> list[dict]:
+    """Per-window top-k class dicts from a `scores` matrix.
 
     The window's top-1 class is always kept; ranks 2..k only when they clear
     `min_confidence`, so silence/noise doesn't flood the table.
     """
-    model, class_names = load_model()
-    scores = model(waveform)[0].numpy()  # (n_windows, 521)
-
+    _, class_names = load_model()
     results = []
     for w, window_scores in enumerate(scores):
         start = round(w * HOP_SECONDS, 3)

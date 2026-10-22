@@ -1,7 +1,7 @@
 import { api, upload } from '../api.js';
 import { createFolderSheet } from '../folders.js';
 import { icon } from '../icons.js';
-import { esc, toast, statusBadge, pageHeader, INPUT } from '../ui.js';
+import { esc, toast, statusBadge, pageHeader, quotaBar, INPUT } from '../ui.js';
 
 const ACCEPT = '.wav,.mp3,.flac,.ogg';
 const POLL_MS = 2500;
@@ -9,7 +9,9 @@ const POLL_MS = 2500;
 export async function renderUpload(el) {
   el.innerHTML = `
     ${pageHeader('Upload audio',
-      'WAV, MP3, FLAC or OGG — files are standardized to 16 kHz mono and classified automatically with YAMNet.')}
+      'WAV, MP3, FLAC or OGG — standardized to 16 kHz mono, human speech muted for privacy, then classified with YAMNet.')}
+
+    <div id="quotaBox" class="mb-3"></div>
 
     <div class="bg-white rounded-xl2 shadow-card p-4 mb-3 flex flex-wrap items-end gap-2">
       <div class="flex-1 min-w-[200px]">
@@ -28,7 +30,7 @@ export async function renderUpload(el) {
       </div>
       <div class="font-medium text-lg"><span class="hidden sm:inline">Drag and drop audio files here</span><span class="sm:hidden">Choose audio files</span></div>
       <div class="text-sm text-ink-muted mt-1.5">
-        <span class="hidden sm:inline">or </span><span class="text-brand font-medium">browse your device</span> · up to 50 MB per file
+        <span class="hidden sm:inline">or </span><span class="text-brand font-medium">browse your device</span> · up to 10 minutes per file
       </div>
       <input id="fileInput" type="file" accept="${ACCEPT},audio/*" multiple class="hidden">
     </div>
@@ -43,7 +45,8 @@ export async function renderUpload(el) {
   const folderSel = el.querySelector('#folderSel');
   const HOVER = ['border-brand', 'bg-brand-tint/30'];
 
-  const folders = await api('/datasets');
+  const [folders, me] = await Promise.all([api('/datasets'), api('/me')]);
+  el.querySelector('#quotaBox').innerHTML = quotaBar(me.quota);
   const paintFolders = (selected) => {
     folderSel.innerHTML = '<option value="">No folder (Library only)</option>'
       + folders.map((d) => `<option value="${d.id}" ${d.id === selected ? 'selected' : ''}>${esc(d.name)}</option>`).join('');
@@ -108,6 +111,7 @@ export async function renderUpload(el) {
       bar.style.width = pct + '%';
       const p = card.querySelector('[data-role=pct]');
       if (p) p.textContent = pct + '%';
+      if (pct >= 100) result.innerHTML = '<span class="text-ink-muted">Checking for voices and classifying…</span>';
     }).then((row) => {
       bar.style.width = '100%';
       state.innerHTML = statusBadge(row.status);
@@ -130,7 +134,10 @@ export async function renderUpload(el) {
               ${top ? `<span class="text-ink-muted">(${(top.mean_confidence * 100).toFixed(0)}% mean confidence)</span>` : ''}
             </span>
             <a class="text-brand hover:underline ml-1.5 inline-flex items-center gap-1" href="#/audio/${id}">
-              Review label ${icon('arrowRight', { size: 14 })}</a>`;
+              Review label ${icon('arrowRight', { size: 14 })}</a>
+            ${d.speech_removed_seconds > 0 ? `
+              <div class="text-xs text-ink-muted mt-1">${icon('lock', { size: 12 })}
+                ${Math.round(d.speech_removed_seconds)} s of human speech was muted before saving.</div>` : ''}`;
         } else if (d.status === 'error') {
           result.innerHTML = '<span class="text-red-600">Classification failed — check the server logs.</span>';
         } else {
@@ -140,3 +147,4 @@ export async function renderUpload(el) {
     }
   }
 }
+
