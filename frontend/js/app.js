@@ -14,6 +14,7 @@ import { renderCommunity, renderCommunityDataset, renderUserPage } from './pages
 import { renderProfile } from './pages/profile.js';
 import { renderDevices } from './pages/devices.js';
 import { renderEditor } from './pages/editor.js';
+import { renderPolicy } from './pages/policies.js';
 import { stopAudio, avatar, esc, sheet, toast, canLeave } from './ui.js';
 
 const routes = {
@@ -29,8 +30,11 @@ const routes = {
   devices: renderDevices,
   edit: (el, id) => renderEditor(el, id),                       // #/edit/{id}
   sound: (el, id) => renderEditor(el, id, { community: true }),  // #/sound/{id}
+  privacy: (el) => renderPolicy(el, 'privacy'),
+  terms: (el) => renderPolicy(el, 'terms'),
 };
 const PUBLIC_PAGES = ['login', 'signup', 'forgot'];
+const POLICY_PAGES = ['privacy', 'terms'];   // readable signed in or out
 // Which nav entry lights up for pages that are not in the nav themselves.
 const NAV_PARENT = { audio: 'library', edit: 'library', u: 'community', sound: 'community' };
 
@@ -67,10 +71,15 @@ async function route() {
     return;
   }
 
-  // --- signed out: only the auth pages are reachable ---
+  // --- signed out: only the auth pages and the policies are reachable ---
   if (!isSignedIn()) {
     appShell.classList.add('hidden');
     authView.classList.remove('hidden');
+    if (POLICY_PAGES.includes(page)) {
+      window.scrollTo(0, 0);
+      renderPolicy(authView, page, { signedIn: false });
+      return;
+    }
     if (!PUBLIC_PAGES.includes(page)) { location.hash = '#/login'; return; }
     renderAuth(authView, page);
     return;
@@ -143,6 +152,8 @@ function openMoreMenu() {
       ${item('#/devices', 'device', 'Devices')}
       ${p ? item(`#/u/${encodeURIComponent(p.username)}`, 'globe', 'My public page') : ''}
       ${item('/docs', 'external', 'API documentation', 'target="_blank"')}
+      ${item('#/privacy', 'lock', 'Privacy policy')}
+      ${item('#/terms', 'review', 'Terms of use')}
     </div>
     <button id="menuLogout" class="mt-4 w-full flex items-center justify-center gap-2 border border-line rounded-full py-3 text-ink-secondary hover:border-accent hover:text-accent">
       ${icon('logout', { size: 18 })} Sign out

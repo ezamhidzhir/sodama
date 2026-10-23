@@ -169,11 +169,17 @@ export function renderAuth(el, mode = 'login') {
                              disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                 <span>${m.button}</span> ${icon('arrowRight', { size: 18 })}
               </button>
+              ${mode === 'signup' ? `
+                <p class="text-xs text-ink-muted text-center">By creating an account, with email or Google, you agree to the
+                  <a href="#/terms" class="text-brand hover:underline">Terms of Use</a> and
+                  <a href="#/privacy" class="text-brand hover:underline">Privacy Policy</a>.</p>` : ''}
             </form>
 
             <div id="authMsg" class="mt-4"></div>
 
             <p class="text-sm text-ink-secondary text-center mt-7">${m.footer}</p>
+            <p class="text-xs text-ink-muted text-center mt-4">
+              <a href="#/privacy" class="hover:text-brand">Privacy</a> · <a href="#/terms" class="hover:text-brand">Terms</a></p>
           </div>
         </div>
       </div>
