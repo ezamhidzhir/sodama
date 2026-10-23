@@ -165,7 +165,7 @@ export async function renderDashboard(el) {
 
   const srcEntries = Object.entries(stats.files_by_source);
   if (srcEntries.length) {
-    new Chart(document.getElementById('sourceChart'), {
+    new Chart(el.querySelector('#sourceChart'), {
       type: 'doughnut',
       data: {
         labels: srcEntries.map(([k]) => SOURCE_NAME[k] ?? k),

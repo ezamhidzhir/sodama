@@ -123,6 +123,7 @@ export async function renderUpload(el) {
     });
 
     async function poll(id) {
+      if (!card.isConnected) return;   // the person left the Upload page
       try {
         const d = await api(`/audio/${id}`);
         state.innerHTML = statusBadge(d.status);

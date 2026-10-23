@@ -383,7 +383,7 @@ export async function renderRecord(el) {
     try {
       const d = await api(`/audio/${id}`);
       const slot = el.querySelector('#yamnet');
-      if (!slot || state.saved?.id !== id) return;
+      if (!el.isConnected || !slot || state.saved?.id !== id) return;
       if (d.status === 'done') {
         const top = d.top_classes[0];
         slot.innerHTML = top

@@ -87,15 +87,22 @@ async function route() {
   });
   document.querySelector('.nav-card')?.classList.toggle('!bg-brand-tint', navKey === 'profile');
 
-  const el = document.getElementById('page');
-  el.classList.remove('fade-in');
-  void el.offsetWidth;          // restart the entry animation
-  el.classList.add('fade-in');
+  const main = document.getElementById('page');
+  main.classList.remove('fade-in');
+  void main.offsetWidth;        // restart the entry animation
+  main.classList.add('fade-in');
   window.scrollTo(0, 0);
+  // Every visit renders into its own fresh container. A page that is still
+  // loading when the person moves on (e.g. Dashboard waiting on /stats when
+  // they tap Library) then finishes into a detached node instead of
+  // overwriting the new page and breaking its lookups.
+  const el = document.createElement('div');
+  main.replaceChildren(el);
   const render = routes[page] || renderDashboard;
   try {
     await render(el, arg && decodeURIComponent(arg));
   } catch (err) {
+    if (!el.isConnected) return;   // the person already left this page
     el.innerHTML = `
       <div class="bg-white rounded-xl3 shadow-card p-8">
         <div class="w-12 h-12 rounded-full bg-red-50 text-red-600 grid place-items-center mb-4">

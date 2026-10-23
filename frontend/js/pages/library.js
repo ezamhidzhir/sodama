@@ -207,7 +207,7 @@ async function loadResults(el) {
 
   const data = await api('/audio' + qs({
     ...state.filters, review_status: state.review, page: state.page, per_page: state.per_page }));
-  if (!el.querySelector('#bulkbar')) return;   // the person left the Library meanwhile
+  if (!el.isConnected) return;   // the person left the Library meanwhile
   if (!data.items.length) {
     const hint = state.review === 'unreviewed' ? 'Every file has been reviewed — nothing left in the queue'
       : state.review ? 'No files in this review state yet'
