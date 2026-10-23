@@ -27,7 +27,7 @@ from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, Resp
 from fastapi.concurrency import run_in_threadpool
 from postgrest.exceptions import APIError
 
-from .. import audio, clips, config, privacy
+from .. import audio, clips, config, privacy, ratelimit
 from ..db import get_client
 
 router = APIRouter(tags=["ingest"])
@@ -168,6 +168,7 @@ async def ingest(
     `sha256` matches yours. 201 = stored now, 200 = already had it."""
     client = get_client()
     device = _device(client, x_api_key)
+    ratelimit.DEVICE_IN.hit(device["id"])
     client_id = _uuid(x_client_id, "X-Client-Id")
     session_id = _uuid(session_id, "session_id")
     if (session_id is None) != (chunk_index is None):

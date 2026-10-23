@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
-from .. import audio, clips, config, labels, media, segments
+from .. import audio, clips, config, labels, media, ratelimit, segments
 from ..auth import User, current_user
 from ..db import get_client
 from .audio_files import get_owned_audio
@@ -93,6 +93,7 @@ def _store(client, user: User, waveform, *, filename: str, kind: str, derived_fr
 @router.post("/audio/{audio_id}/loop", status_code=201,
              summary="Extend a stretch of your audio to a length by looping it")
 async def loop_audio(audio_id: str, body: LoopBody, user: User = Depends(current_user)):
+    ratelimit.EDITS.hit(user.id)
     client = get_client()
     row = get_owned_audio(client, audio_id, user)
     samples = await run_in_threadpool(media.samples, client, row)
@@ -110,6 +111,7 @@ async def loop_audio(audio_id: str, body: LoopBody, user: User = Depends(current
 
 @router.post("/audio/merge", status_code=201, summary="Join several of your clips into one sound")
 async def merge_audio(body: MergeBody, user: User = Depends(current_user)):
+    ratelimit.EDITS.hit(user.id)
     client = get_client()
     rows = (client.table("audio_files").select("*").in_("id", body.audio_ids)
             .eq("user_id", user.id).execute().data)
@@ -233,6 +235,7 @@ async def save_public_clip(audio_id: str, body: SaveBody, user: User = Depends(c
     """The copy keeps who made the sound and under which licence (`attribution`),
     and exports credit them. Every licence SODAMA offers allows edits, provided
     the author is credited."""
+    ratelimit.EDITS.hit(user.id)
     client = get_client()
     a, d, author = public_clip(client, audio_id)
     samples = await run_in_threadpool(media.samples, client, a)

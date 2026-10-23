@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .. import labels, media
+from .. import labels, media, ratelimit
 from ..auth import User, current_user
 from ..db import get_client
 
@@ -128,6 +128,16 @@ def dataset_rows(client, dataset_id: str) -> list[dict]:
         r["label"], r["label_source"] = labels.final_label(r, predicted.get(r["id"]))
     rows.sort(key=lambda r: r["added_at"], reverse=True)
     return rows
+
+
+def csv_safe(value):
+    """Labels and file names are typed by users, and a public dataset's CSV is
+    opened by strangers. Text starting with = + - @ (or a tab / carriage
+    return) runs as a formula in Excel or Sheets, so it is prefixed with an
+    apostrophe, which makes the spreadsheet show it as plain text."""
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + value
+    return value
 
 
 def exportable(rows: list[dict]) -> list[dict]:
@@ -555,7 +565,7 @@ def build_export(client, dataset: dict, *, manifest_format: str = "both",
         out = io.StringIO()
         w = csv.DictWriter(out, fieldnames=columns, extrasaction="ignore", restval="")
         w.writeheader()
-        w.writerows(subset)
+        w.writerows({k: csv_safe(v) for k, v in r.items()} for r in subset)
         return out.getvalue()
 
     buf = io.BytesIO()
@@ -608,6 +618,7 @@ def export_dataset(
     """
     client = get_client()
     dataset = get_owned_dataset(client, dataset_id, user)
+    ratelimit.EXPORTS.hit(user.id)
     return build_export(client, dataset, manifest_format=manifest_format,
                         only_approved=only_approved, split=split,
                         train_ratio=train_ratio, val_ratio=val_ratio,

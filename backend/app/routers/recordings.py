@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
-from .. import audio, clips, config, labels
+from .. import audio, clips, config, labels, ratelimit
 from ..auth import User, current_user
 from ..db import get_client
 from .datasets import attach_to_dataset, get_owned_dataset
@@ -54,6 +54,7 @@ async def create_recording(
                                         description="e.g. 'Android phone · Chrome'"),
     user: User = Depends(current_user),
 ):
+    ratelimit.AUDIO_IN.hit(user.id)
     raw = await file.read()
     if not raw:
         raise HTTPException(400, "empty recording")

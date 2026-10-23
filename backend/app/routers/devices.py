@@ -4,6 +4,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from .. import ratelimit
 from ..auth import User, current_user
 from ..db import get_client
 from .ingest import discard_pending_chunks
@@ -34,6 +35,7 @@ def _get_device_or_404(client, device_id: str, user: User) -> dict:
 @router.post("/devices", status_code=201,
              summary="Register a recording device or client (returns its API key once)")
 def create_device(body: DeviceCreate, user: User = Depends(current_user)):
+    ratelimit.ACCOUNT.hit(user.id)
     client = get_client()
     name = body.device_name.strip()
     existing = (client.table("devices").select("id")
@@ -67,6 +69,7 @@ def list_devices(user: User = Depends(current_user)):
 
 @router.patch("/devices/{device_id}", summary="Rename a device or rotate its API key")
 def update_device(device_id: str, body: DeviceUpdate, user: User = Depends(current_user)):
+    ratelimit.ACCOUNT.hit(user.id)
     client = get_client()
     device = _get_device_or_404(client, device_id, user)
 

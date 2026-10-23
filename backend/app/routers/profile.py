@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 
-from .. import clips, config
+from .. import clips, config, ratelimit
 from ..auth import USERNAME_RE, User, _profiled, current_user, forget_token
 from ..db import get_client
 from .ingest import discard_pending_chunks
@@ -115,14 +115,28 @@ def update_me(body: ProfileUpdate, user: User = Depends(current_user)):
     return get_me(user)
 
 
+def _looks_like(ext: str, data: bytes) -> bool:
+    if ext in ("jpg", "jpeg"):
+        return data[:3] == b"\xff\xd8\xff"
+    if ext == "png":
+        return data[:8] == b"\x89PNG\r\n\x1a\n"
+    if ext == "webp":
+        return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+    return False
+
+
 @router.post("/me/avatar", summary="Upload a profile picture (JPEG/PNG/WebP, 2 MB)")
 async def upload_avatar(file: UploadFile = File(...), user: User = Depends(current_user)):
+    ratelimit.ACCOUNT.hit(user.id)
     ext = AVATAR_TYPES.get(file.content_type or "")
     if not ext:
         raise HTTPException(415, "use a JPEG, PNG or WebP image")
     data = await file.read()
     if len(data) > AVATAR_MAX:
         raise HTTPException(413, "image is larger than 2 MB")
+    # The bucket is public, so check the bytes, not just the type the browser claims.
+    if not _looks_like(ext, data):
+        raise HTTPException(415, "that file is not a valid JPEG, PNG or WebP image")
 
     client = get_client()
     old = _load(client, user).get("avatar_path")
@@ -158,8 +172,15 @@ def delete_me(body: DeleteAccount, user: User = Depends(current_user),
     if body.confirm.strip().lower() != profile["username"]:
         raise HTTPException(400, "type your username exactly to confirm")
 
-    paths = [r["storage_path"] for r in client.table("audio_files").select("storage_path")
-             .eq("user_id", user.id).execute().data if r["storage_path"]]  # clips own none
+    # Paged: one request returns at most 1000 rows, and every stored file must go.
+    paths, start = [], 0
+    while True:
+        page = (client.table("audio_files").select("storage_path").eq("user_id", user.id)
+                .order("id").range(start, start + 999).execute().data)
+        paths += [r["storage_path"] for r in page if r["storage_path"]]  # clips own none
+        if len(page) < 1000:
+            break
+        start += 1000
     for i in range(0, len(paths), 100):
         client.storage.from_(config.AUDIO_BUCKET).remove(paths[i:i + 100])
     if profile.get("avatar_path"):

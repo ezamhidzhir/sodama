@@ -16,7 +16,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from .. import config, media
+from .. import config, media, ratelimit
 from ..auth import User, current_user
 from ..db import get_client
 from .datasets import LICENSES, build_export, dataset_rows, exportable
@@ -153,6 +153,7 @@ def download(dataset_id: str,
              user: User = Depends(current_user)):
     client = get_client()
     d = _public_dataset(client, dataset_id, user)
+    ratelimit.EXPORTS.hit(user.id)
     owner = _owner(client, d["user_id"])
     response = build_export(client, d, split=split, only_approved=only_approved,
                             public_author=owner["username"])
@@ -175,6 +176,7 @@ def report(dataset_id: str, body: Report, user: User = Depends(current_user)):
     d = _public_dataset(client, dataset_id, user)
     if d["user_id"] == user.id:
         raise HTTPException(400, "you cannot report your own dataset")
+    ratelimit.REPORTS.hit(user.id)
     client.table("dataset_reports").upsert({
         "dataset_id": dataset_id, "user_id": user.id, "reason": body.reason,
         "note": (body.note or "").strip() or None,

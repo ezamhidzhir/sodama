@@ -3,7 +3,7 @@ import os
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
-from .. import audio, clips, config
+from .. import audio, clips, config, ratelimit
 from ..auth import User, current_user
 from ..db import get_client
 from .datasets import attach_to_dataset
@@ -21,6 +21,7 @@ async def upload_audio(file: UploadFile = File(...),
     """Checks the length from the file header before decoding, standardizes to
     16 kHz mono, mutes human speech, stores it as FLAC and classifies it with
     YAMNet — all before answering, so the file is `done` on arrival."""
+    ratelimit.AUDIO_IN.hit(user.id)
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(415, f"unsupported file type '{ext}' — "

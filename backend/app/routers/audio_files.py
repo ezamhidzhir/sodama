@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
-from .. import audio, clips, config, labels, media, segments
+from .. import audio, clips, config, labels, media, ratelimit, segments
 from ..auth import User, current_user
 from ..db import get_client
 
@@ -346,6 +346,8 @@ def create_clips(audio_id: str, body: ClipCreate, user: User = Depends(current_u
     recording's windows that fall inside it, so no audio is re-analysed;
     every clip starts unreviewed unless `inherit_label` is set."""
     from .datasets import attach_to_dataset
+
+    ratelimit.EDITS.hit(user.id)
 
     client = get_client()
     row = get_owned_audio(client, audio_id, user)

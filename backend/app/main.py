@@ -5,6 +5,7 @@ Run from the backend/ directory:
 Swagger UI: http://127.0.0.1:8000/docs
 """
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import backfill
+from .security import BodySizeLimit, SecurityHeaders
 from .routers import (audio_files, community, datasets, devices, edits, ingest, profile,
                       recordings, stats, upload)
 
@@ -56,12 +58,20 @@ app = FastAPI(
     ),
 )
 
+# The dashboard is served from this same origin, and devices are not browsers,
+# so cross-origin browser calls are only needed for local development.
+ALLOWED_ORIGINS = [o.strip() for o in os.environ.get(
+    "ALLOWED_ORIGINS",
+    "https://sodama.up.railway.app,http://127.0.0.1:8000,http://localhost:8000").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten to the dashboard origin when frontend deploys
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(BodySizeLimit)
+app.add_middleware(SecurityHeaders)
 
 app.include_router(upload.router)
 app.include_router(recordings.router)
