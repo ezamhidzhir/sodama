@@ -56,6 +56,8 @@ function friendly(code, fallback) {
     same_password: 'The new password must be different from the current one.',
     over_email_send_rate_limit: 'Too many emails sent. Wait a few minutes and try again.',
     over_request_rate_limit: 'Too many attempts. Wait a minute and try again.',
+    // Supabase's built-in mailer only sends to the project team's addresses.
+    email_address_not_authorized: 'SODAMA cannot send email to this address yet. Sign in with Google instead, or try again later.',
   };
   return map[code] || fallback || 'Authentication failed';
 }
