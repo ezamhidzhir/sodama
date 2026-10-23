@@ -41,6 +41,7 @@ def list_audio(
     kind: Literal["all", "recordings", "clips"] = Query(
         "all", description="recordings = stored originals, clips = cut from a recording"),
     parent_id: str | None = Query(None, description="Only the clips cut from this recording"),
+    device_id: str | None = Query(None, description="Only audio sent by this device"),
     min_duration: float | None = Query(None, ge=0, description="Seconds, inclusive"),
     max_duration: float | None = Query(None, ge=0, description="Seconds, inclusive"),
     user: User = Depends(current_user),
@@ -89,6 +90,8 @@ def list_audio(
         q_ = q_.not_.is_("parent_id", "null")
     if parent_id:
         q_ = q_.eq("parent_id", parent_id)
+    if device_id:
+        q_ = q_.eq("device_id", device_id)
     if min_duration is not None:
         q_ = q_.gte("duration", min_duration)
     if max_duration is not None:

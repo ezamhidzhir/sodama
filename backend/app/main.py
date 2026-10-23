@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import backfill
@@ -17,6 +18,7 @@ from .routers import (audio_files, community, datasets, devices, edits, ingest, 
                       recordings, stats, upload)
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+CLIENT_SCRIPT = Path(__file__).resolve().parents[2] / "client" / "sodama_client.py"
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -76,6 +78,13 @@ app.include_router(stats.router)
 @app.get("/health", tags=["system"])
 def health():
     return {"status": "ok"}
+
+
+@app.get("/client/sodama_client.py", tags=["system"],
+         summary="Download the reference device client (Python script)")
+def download_client():
+    return FileResponse(CLIENT_SCRIPT, media_type="text/x-python",
+                        filename="sodama_client.py")
 
 
 # dashboard SPA — mounted last so API routes take precedence

@@ -17,7 +17,14 @@ const TABS = [
 const TAB_ON = 'bg-brand text-white border-brand';
 const TAB_OFF = 'bg-white border-line text-ink-secondary hover:border-brand hover:text-brand';
 
-export async function renderLibrary(el) {
+export async function renderLibrary(el, arg) {
+  // #/library/device:<id> — opened from a device card: show that device's audio.
+  if (arg?.startsWith('device:')) {
+    state.filters = { device_id: arg.slice('device:'.length) };
+    state.review = '';
+    state.page = 1;
+    state.showFilters = true;
+  }
   el.innerHTML = `
     ${pageHeader('Library', 'Search your collection, then confirm or correct each label.',
       `<a href="#/record" class="hidden sm:inline-flex items-center gap-2 bg-brand text-white text-sm px-5 py-2.5 rounded-full hover:bg-brand-dark transition-colors">${icon('mic', { size: 16 })} Record</a>
@@ -55,6 +62,10 @@ export async function renderLibrary(el) {
             <option value="">All sources</option><option value="recording">Recorded</option>
             <option value="upload">Upload</option><option value="device">Device</option>
           </select>
+        </div>
+        <div>
+          <label class="block text-xs text-ink-muted mb-1.5">Device</label>
+          <select name="device_id" id="deviceFilter" class="${INPUT}"><option value="">All devices</option></select>
         </div>
         <div>
           <label class="block text-xs text-ink-muted mb-1.5">Show</label>
@@ -154,7 +165,10 @@ export async function renderLibrary(el) {
       s.class_distribution.map((c) => `<option value="${esc(c.class_name)}">`).join('');
   }).catch(() => {});
 
-  const datasets = await api('/datasets').catch(() => []);
+  const [datasets, devices] = await Promise.all([
+    api('/datasets').catch(() => []), api('/devices').catch(() => [])]);
+  el.querySelector('#deviceFilter').innerHTML = '<option value="">All devices</option>'
+    + devices.map((d) => `<option value="${d.id}">${esc(d.device_name)}</option>`).join('');
   el.querySelector('#folderFilter').innerHTML = '<option value="">All folders</option>'
     + datasets.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
   el.querySelector('#dsSelect').innerHTML = datasets.length

@@ -1,4 +1,5 @@
 import secrets
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -12,6 +13,9 @@ router = APIRouter(tags=["devices"])
 
 class DeviceCreate(BaseModel):
     device_name: str = Field(min_length=1, max_length=64)
+    kind: Literal["computer", "api"] = Field(
+        "computer", description="computer = runs client/sodama_client.py; "
+                                "api = an ESP32 or a program that calls /ingest itself")
 
 
 class DeviceUpdate(BaseModel):
@@ -39,18 +43,25 @@ def create_device(body: DeviceCreate, user: User = Depends(current_user)):
 
     row = client.table("devices").insert({
         "device_name": name, "api_key": secrets.token_hex(24), "user_id": user.id,
+        "kind": body.kind,
     }).execute().data[0]
     # only time the full key is returned — put it in the firmware or client config
     return row
 
 
-@router.get("/devices", summary="List devices (API keys masked)")
+@router.get("/devices", summary="List devices (API keys masked) with recording stats")
 def list_devices(user: User = Depends(current_user)):
     client = get_client()
     rows = (client.table("devices").select("*")
             .eq("user_id", user.id).order("created_at").execute().data)
+    stats = {s["device_id"]: s for s in
+             client.rpc("device_stats", {"p_user": user.id}).execute().data or []}
     for r in rows:
         r["api_key"] = "…" + r["api_key"][-4:]
+        s = stats.get(r["id"], {})
+        r["recordings"] = s.get("recordings", 0)
+        r["total_seconds"] = s.get("total_seconds", 0)
+        r["last_recording"] = s.get("last_recording")
     return rows
 
 
