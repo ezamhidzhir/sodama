@@ -3,6 +3,8 @@
 YAMNet scores audio in 0.96s windows with a 0.48s hop; each window's top-k
 classes are stored as rows in the `classifications` table.
 """
+import csv
+import io
 import logging
 import shutil
 import threading
@@ -41,11 +43,18 @@ def load_model():
                 config.YAMNET_CACHE_DIR.mkdir(parents=True, exist_ok=True)
                 _model = hub.load(YAMNET_HANDLE)
             class_map = _model.class_map_path().numpy().decode()
-            _class_names = [
-                line.split(",")[2].strip().strip('"')
-                for line in tf.io.gfile.GFile(class_map).read().splitlines()[1:]
-            ]
+            _class_names = read_class_map(tf.io.gfile.GFile(class_map).read())
     return _model, _class_names
+
+
+def read_class_map(text: str) -> list[str]:
+    """display_name column of yamnet_class_map.csv (index,mid,display_name).
+
+    73 names hold a comma inside quotes ("Inside, small room"), so this needs a
+    real CSV parser: splitting on commas cut them to "Inside" and merged three
+    different room classes into one.
+    """
+    return [row[2] for row in list(csv.reader(io.StringIO(text)))[1:] if row]
 
 
 def scores(waveform: np.ndarray) -> np.ndarray:

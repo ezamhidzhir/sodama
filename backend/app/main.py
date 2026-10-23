@@ -5,12 +5,14 @@ Run from the backend/ directory:
 Swagger UI: http://127.0.0.1:8000/docs
 """
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from . import backfill
 from .routers import (audio_files, community, datasets, devices, edits, ingest, profile,
                       recordings, stats, upload)
 
@@ -32,7 +34,15 @@ class NoCacheStaticFiles(StaticFiles):
 
 logging.basicConfig(level=logging.INFO)
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    backfill.start_in_background()   # repairs class names stored truncated before Oct 2026
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Sound Data Management System",
     version="0.3.0",
     description=(

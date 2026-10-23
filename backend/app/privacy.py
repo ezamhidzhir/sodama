@@ -13,21 +13,24 @@ This is best effort: it is only as good as YAMNet's speech detection. A whisper
 under loud machinery can slip through, which is why Community also has a
 Report button.
 """
+import logging
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from . import audio, classifier, config
 
+logger = logging.getLogger(__name__)
+
 # YAMNet classes that carry words. Singing, laughter, crying and screaming are
 # left alone: they are non-verbal or musical, and muting them would gut music
-# and animal-adjacent recordings for little privacy gain. Names are as
-# classifier.class_names() gives them (the class map's text before any comma:
-# "Child speech, kid speaking" is "Child speech").
+# and animal-adjacent recordings for little privacy gain. Names are YAMNet's
+# full display names, exactly as classifier.class_names() gives them.
 SPEECH_CLASSES = {
-    "Speech", "Child speech", "Conversation", "Narration", "Babbling",
-    "Speech synthesizer", "Shout", "Bellow", "Whoop", "Yell", "Children shouting",
-    "Whispering", "Rapping", "Chatter", "Hubbub",
+    "Speech", "Child speech, kid speaking", "Conversation", "Narration, monologue",
+    "Babbling", "Speech synthesizer", "Shout", "Bellow", "Whoop", "Yell",
+    "Children shouting", "Whispering", "Rapping", "Chatter",
+    "Hubbub, speech noise, speech babble",
 }
 FADE_SECONDS = 0.02   # short ramps so a muted stretch does not start with a click
 
@@ -48,6 +51,9 @@ class Result:
 
 def _speech_columns() -> list[int]:
     names = classifier.class_names()
+    missing = SPEECH_CLASSES - set(names)
+    if missing:   # a renamed class would silently stop being muted
+        logger.error("privacy: speech classes not in YAMNet's class map: %s", sorted(missing))
     return [i for i, n in enumerate(names) if n in SPEECH_CLASSES]
 
 
