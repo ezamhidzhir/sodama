@@ -8,7 +8,8 @@ import { esc, fmtDuration, fmtDate, timeAgo, statusBadge, spinner, toast, pageHe
 
 const ONLINE_WINDOW_MS = 5 * 60 * 1000;
 const POLL_MS = 5000;
-const KEY_PLACEHOLDER = '<your-device-key>';
+// No < > around it: PowerShell treats "<" as an operator and refuses the line.
+const KEY_PLACEHOLDER = 'PASTE-YOUR-KEY-HERE';
 
 const KINDS = {
   computer: {
@@ -36,16 +37,22 @@ const copyBtn = (text, label) => `
           class="w-8 h-8 shrink-0 rounded-full bg-white border border-line text-ink-secondary hover:border-brand hover:text-brand grid place-items-center transition-colors"
           aria-label="Copy">${icon('copy', { size: 14 })}</button>`;
 
-const cmdBox = (cmd) => `
+// The parts a person must replace (key, file name, folder) are highlighted, so
+// an example value is never mistaken for a real one.
+const MARK = 'bg-[#FBF3E0] text-[#8A6208] rounded px-1 font-semibold';
+const withMarks = (text, marks = []) => marks.reduce(
+  (html, m) => html.split(esc(m)).join(`<mark class="${MARK}">${esc(m)}</mark>`), esc(text));
+
+const cmdBox = (cmd, marks = []) => `
   <div class="flex items-start gap-2 bg-page border border-line rounded-xl p-2.5">
-    <code class="flex-1 min-w-0 text-xs break-all leading-relaxed pt-1.5">${esc(cmd)}</code>
+    <code class="flex-1 min-w-0 text-xs break-all leading-relaxed pt-1.5">${withMarks(cmd, marks)}</code>
     ${copyBtn(cmd, 'Command copied')}
   </div>`;
 
-const valueRow = (label, value) => `
+const valueRow = (label, value, marks = []) => `
   <div class="p-3 flex items-start gap-2">
     <div class="flex-1 min-w-0"><dt class="text-xs text-ink-muted mb-1">${label}</dt>
-      <dd><code class="text-xs break-all">${esc(value)}</code></dd></div>
+      <dd><code class="text-xs break-all">${withMarks(value, marks)}</code></dd></div>
     ${copyBtn(value, `${label} copied`)}
   </div>`;
 
@@ -227,16 +234,85 @@ export async function renderDevices(el) {
       </div>`;
   }
 
-  function computerSteps(key) {
+  // The three ways a computer can send audio. They are alternatives: the
+  // person picks one, and only that command is shown.
+  function computerWays(key) {
     const base = `python sodama_client.py --server ${location.origin} --key ${key}`;
-    const ways = [
-      ['mic', 'Record from its microphone', `${base} mic --chunk 10`,
-        'Sends a 10-second clip at a time until you press Ctrl+C. Needs the two packages from step 2.'],
-      ['upload', 'Send audio files you already have', `${base} send --keep recording1.wav recording2.wav`,
-        'WAV, FLAC, MP3 or OGG. <code>--keep</code> leaves your files where they are.'],
-      ['folder', 'Send whatever lands in a folder', `${base} watch C:\\recordings`,
-        'Each file is removed from the folder once SODAMA confirms it arrived safely, so the folder never fills up.'],
-    ];
+    const keyMark = key === KEY_PLACEHOLDER ? [KEY_PLACEHOLDER] : [];
+    return {
+      mic: {
+        icon: 'mic', title: 'Record with its microphone', hint: 'The computer records by itself',
+        cmd: `${base} mic --chunk 10`, marks: keyMark,
+        change: null,
+        happens: [
+          'Records 10 seconds at a time and sends each piece as one clip.',
+          'Press <b>Ctrl+C</b> to stop, then wait for <code>session closed</code> before closing the window; the last piece is still being sent.',
+          'Needs the two packages from step 2.',
+        ],
+      },
+      send: {
+        icon: 'upload', title: 'Send audio files', hint: 'You already have recordings',
+        cmd: `${base} send --keep FILE-NAME.wav`, marks: [...keyMark, 'FILE-NAME.wav'],
+        change: 'Replace <mark class="' + MARK + '">FILE-NAME.wav</mark> with your file. List several with spaces between them, and put a name that contains spaces in quotes, for example <code>"Sound 21 sec.mp3"</code>.',
+        happens: [
+          'Sends each file once (WAV, FLAC, MP3 or OGG), then stops.',
+          '<code>--keep</code> leaves your files where they are. Without it, each file is deleted once SODAMA confirms it arrived.',
+        ],
+      },
+      watch: {
+        icon: 'folder', title: 'Watch a folder', hint: 'Another program saves recordings there',
+        cmd: `${base} watch C:\\recordings`, marks: [...keyMark, 'C:\\recordings'],
+        change: 'Replace <mark class="' + MARK + '">C:\\recordings</mark> with the folder to watch. It is created if it does not exist.',
+        happens: [
+          'Keeps running and sends every new audio file that appears in the folder.',
+          'Each file is removed from the folder once SODAMA confirms it arrived, so the folder never fills up.',
+          'Press <b>Ctrl+C</b> to stop.',
+        ],
+      },
+    };
+  }
+
+  function wayBody(key) {
+    const w = computerWays(key)[wizard.way || 'mic'];
+    return `
+      ${cmdBox(w.cmd, w.marks)}
+      ${w.change ? `<div class="flex gap-2 text-xs text-ink-secondary mt-2">${icon('pencil', { size: 13 })}<span>${w.change}</span></div>` : ''}
+      ${key === KEY_PLACEHOLDER ? `<div class="flex gap-2 text-xs text-ink-secondary mt-2">${icon('key', { size: 13 })}<span>Replace <mark class="${MARK}">${KEY_PLACEHOLDER}</mark> with this device's key.</span></div>` : ''}
+      <div class="text-xs text-ink-muted mt-3 mb-1 font-medium">What happens</div>
+      <ul class="text-xs text-ink-secondary list-disc pl-5 space-y-1">${w.happens.map((h) => `<li>${h}</li>`).join('')}</ul>`;
+  }
+
+  const wayChoices = (ways, at) => `
+    <div class="grid sm:grid-cols-3 gap-2 mt-3" role="radiogroup" aria-label="How the computer sends audio">
+      ${Object.entries(ways).map(([k, w]) => `
+        <button type="button" data-way="${k}" role="radio" aria-checked="${k === at}"
+                class="wayBtn text-left flex gap-2.5 items-start rounded-xl2 p-3 border transition-colors
+                       ${k === at ? 'border-brand bg-brand-soft ring-1 ring-brand/40' : 'border-line hover:border-brand'}">
+          <span class="w-8 h-8 rounded-full grid place-items-center shrink-0 ${k === at ? 'bg-brand text-white' : 'bg-page text-brand'}">${icon(w.icon, { size: 15 })}</span>
+          <span class="min-w-0"><span class="block font-medium text-ink text-sm">${w.title}</span>
+            <span class="block text-xs text-ink-muted">${w.hint}</span></span>
+        </button>`).join('')}
+    </div>`;
+
+  // One listener for the whole page: switching the way repaints only the
+  // choices and the command, so nothing else is re-wired or jumps.
+  setupBox.addEventListener('click', (e) => {
+    const b = e.target.closest('.wayBtn');
+    if (!b || wizard?.step !== 'connect') return;
+    wizard.way = b.dataset.way;
+    const key = wizard.key || KEY_PLACEHOLDER;
+    setupBox.querySelector('#wayChoices').innerHTML = wayChoices(computerWays(key), wizard.way);
+    setupBox.querySelector('#wayBody').innerHTML = wayBody(key);
+  });
+
+  const reviewStep = (n) => stepItem(n, 'Review what arrives', `
+    Each clip lands in your <a href="#/library" class="text-brand hover:underline">Library</a> under
+    <b>Needs review</b>, with the label YAMNet suggests. Nobody named the sound while it was recorded,
+    so confirm or correct the label there before using it in a dataset.`);
+
+  function computerSteps(key) {
+    const ways = computerWays(key);
+    const at = wizard.way || 'mic';
     return `
       <ol class="space-y-5">
         ${stepItem(1, 'Install Python 3.10 or newer', `Skip this if the computer already has it. Get it from
@@ -247,32 +323,31 @@ export async function renderDevices(el) {
           </div>
           <div class="text-ink-muted mt-3 mb-1.5">To record from the microphone, also install two packages once:</div>
           ${cmdBox('pip install sounddevice numpy')}`)}
-        ${stepItem(3, 'Open a terminal where you saved the script, and run one of these', `
-          <div class="space-y-3 mt-2">
-            ${ways.map(([ic, title, cmd, note]) => `
-              <div class="border border-line rounded-xl2 p-3">
-                <div class="flex items-center gap-2 font-medium text-ink mb-2">${icon(ic, { size: 15 })} ${title}</div>
-                ${cmdBox(cmd)}
-                <div class="text-xs text-ink-muted mt-1.5">${note}</div>
-              </div>`).join('')}
-          </div>`)}
+        ${stepItem(3, 'Choose how it sends audio, then run that command', `
+          <div class="text-ink-muted mt-0.5">Pick one. Open a terminal in the folder where you saved the script, and run the command shown.</div>
+          <div id="wayChoices">${wayChoices(ways, at)}</div>
+          <div id="wayBody" class="mt-3">${wayBody(key)}</div>`)}
+        ${reviewStep(4)}
       </ol>`;
   }
 
   function apiSteps(key) {
-    const curl = `curl -X POST "${location.origin}/ingest" -H "X-API-Key: ${key}" -H "Content-Type: audio/wav" --data-binary @sound.wav`;
+    const curl = `curl -X POST "${location.origin}/ingest" -H "X-API-Key: ${key}" -H "Content-Type: audio/wav" --data-binary @FILE-NAME.wav`;
+    const keyMark = key === KEY_PLACEHOLDER ? [KEY_PLACEHOLDER] : [];
     return `
       <ol class="space-y-5">
         ${stepItem(1, 'Send each recording to this address', `
           <dl class="mt-2 border border-line rounded-xl2 divide-y divide-line text-sm">
             ${valueRow('Address', `POST ${location.origin}/ingest`)}
-            ${valueRow('Header', `X-API-Key: ${key}`)}
+            ${valueRow('Header', `X-API-Key: ${key}`, keyMark)}
             <div class="p-3"><dt class="text-xs text-ink-muted mb-1">Body</dt>
               <dd>An audio file (WAV, FLAC, MP3 or OGG) with its <code>Content-Type</code>, or raw 16-bit mono PCM at 16 kHz.</dd></div>
           </dl>`)}
         ${stepItem(2, 'Test it from any terminal', `
-          <div class="mt-2">${cmdBox(curl)}</div>
+          <div class="mt-2">${cmdBox(curl, [...keyMark, 'FILE-NAME.wav'])}</div>
+          <div class="text-xs text-ink-secondary mt-1.5">Replace <mark class="${MARK}">FILE-NAME.wav</mark> with a real audio file${key === KEY_PLACEHOLDER ? `, and <mark class="${MARK}">${KEY_PLACEHOLDER}</mark> with this device's key` : ''}.</div>
           <div class="text-xs text-ink-muted mt-1.5">The reply is a receipt. Delete the device's copy only when its <code>sha256</code> matches the file you sent.</div>`)}
+        ${reviewStep(3)}
       </ol>
       <div class="flex gap-2 bg-page rounded-xl2 p-3 mt-5 text-xs text-ink-secondary">
         ${icon('helpCircle', { size: 15 })}
@@ -296,7 +371,7 @@ export async function renderDevices(el) {
       <div class="flex flex-wrap items-center gap-3 bg-brand-tint border border-brand/25 rounded-xl2 p-4 text-sm">
         <span class="text-brand">${icon('checkCircle', { size: 20 })}</span>
         <div class="flex-1 min-w-[12rem]"><div class="font-medium text-brand-dark">Connected</div>
-          <div class="text-xs text-ink-secondary">Last heard from ${esc(timeAgo(d.last_seen))}</div></div>
+          <div class="text-xs text-ink-secondary">Last heard from ${esc(timeAgo(d.last_seen))} · new clips wait under Needs review</div></div>
         <a href="#/library/device:${d.id}" class="${BTN_MAIN}">${icon('search', { size: 16 })} View recordings</a>
       </div>`;
   }
