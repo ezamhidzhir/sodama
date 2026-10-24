@@ -23,6 +23,41 @@ def get_owned_audio(client, audio_id: str, user: User, columns: str = "*") -> di
     return rows[0]
 
 
+SEARCH_MIN_CONFIDENCE = 0.3   # the bar the dashboard uses for "files containing a class"
+
+
+def _unreviewed_ids_with_class(client, user_id: str, term: str) -> list[str]:
+    """Files with no human label yet where YAMNet heard a class matching `term`
+    in at least one window at 30% or more. A human label, once given, is what
+    the file is searched by instead."""
+    ids, start = set(), 0
+    while True:   # paged: one request returns at most 1000 rows
+        rows = (client.table("classifications")
+                .select("audio_file_id, audio_files!inner(user_id, verified_label)")
+                .eq("audio_files.user_id", user_id)
+                .is_("audio_files.verified_label", "null")
+                .ilike("class_name", f"%{term}%")
+                .gte("confidence", SEARCH_MIN_CONFIDENCE)
+                .order("id").range(start, start + 999).execute().data)
+        ids |= {r["audio_file_id"] for r in rows}
+        if len(rows) < 1000:
+            return sorted(ids)
+        start += 1000
+
+
+def _ids_with_filename(client, user_id: str, term: str) -> list[str]:
+    """Recordings whose file name matches, so their clips match too."""
+    ids, start = [], 0
+    while True:
+        rows = (client.table("audio_files").select("id").eq("user_id", user_id)
+                .is_("parent_id", "null").ilike("filename", f"%{term}%")
+                .order("id").range(start, start + 999).execute().data)
+        ids += [r["id"] for r in rows]
+        if len(rows) < 1000:
+            return ids
+        start += 1000
+
+
 @router.get("/audio", summary="List your audio files (paginated, filterable)")
 def list_audio(
     page: int = Query(1, ge=1),
@@ -69,11 +104,22 @@ def list_audio(
            .limit(1, foreign_table="classifications")
 
     if q:
-        # PostgREST's or=() syntax treats , ( ) and * as structure — strip them
-        term = re.sub(r'[,()*%\\"]', " ", q).strip()
+        # Values sit in double quotes inside PostgREST's or=(), so commas and
+        # brackets are safe ("Pump (liquid)"); only quotes, backslashes and the
+        # wildcards * and % would change the filter, so those are dropped.
+        term = " ".join(re.sub(r'[*%\\"]', " ", q).split())
         if term:
-            q_ = q_.or_(",".join(f'{col}.ilike."*{term}*"'
-                                 for col in ("filename", "verified_label", "location_name")))
+            match = [f'{col}.ilike."*{term}*"'
+                     for col in ("filename", "verified_label", "location_name")]
+            # Search what the Library shows: an unreviewed file's label is
+            # YAMNet's class, and a clip is listed as "Clip … of <recording>".
+            predicted = _unreviewed_ids_with_class(client, user.id, term)
+            if predicted:
+                match.append(f"id.in.({','.join(predicted)})")
+            parents = _ids_with_filename(client, user.id, term)
+            if parents:
+                match.append(f"parent_id.in.({','.join(parents)})")
+            q_ = q_.or_(",".join(match))
     if source:
         q_ = q_.eq("source", source)
     if status:

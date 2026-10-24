@@ -135,6 +135,7 @@ export async function renderLibrary(el, arg) {
     state.filters = { ...Object.fromEntries(new FormData(form)), q: search.elements.q.value.trim() };
     state.page = 1;
     paintFilterCount(el);
+    refreshCounts(el);
     loadResults(el);
   };
   form.addEventListener('submit', (e) => { e.preventDefault(); readFilters(); });
@@ -147,7 +148,7 @@ export async function renderLibrary(el, arg) {
   });
   el.querySelector('#clearBtn').addEventListener('click', () => {
     form.reset(); search.reset(); state.filters = {}; state.page = 1;
-    paintFilterCount(el); loadResults(el);
+    paintFilterCount(el); refreshCounts(el); loadResults(el);
   });
 
   el.querySelectorAll('#reviewTabs .tab').forEach((b) => b.addEventListener('click', () => {
@@ -188,16 +189,18 @@ function paintFilterCount(el) {
   el.querySelector('#filterCount').textContent = n ? `(${n})` : '';
 }
 
-// Tab counts come from the dashboard aggregate — one round-trip for all four.
+// Tab counts use the same search and filters as the list, so each number is
+// exactly what that tab shows (recordings and clips alike).
 function refreshCounts(el) {
-  api('/stats').then((s) => {
-    const by = s.files_by_review ?? {};
+  const total = (review) => api('/audio' + qs({ ...state.filters, review_status: review, page: 1, per_page: 1 }))
+    .then((d) => d.total).catch(() => null);
+  Promise.all(TABS.map((t) => total(t.key))).then((totals) => {
+    if (!el.isConnected) return;
     el.querySelectorAll('.tabCount').forEach((n) => {
-      const k = n.dataset.review;
-      const count = k ? (by[k] ?? 0) : s.total_files;
+      const count = totals[TABS.findIndex((t) => t.key === n.dataset.review)];
       n.textContent = count ? String(count) : '';
     });
-  }).catch(() => {});
+  });
 }
 
 const labelCell = (f) => (f.verified_label
