@@ -13,6 +13,7 @@ export const fmtDuration = (sec) => {
 };
 
 export const fmtHours = (sec) => {
+  if (sec < 60) return `${Math.round(sec)} s`;
   if (sec < 3600) return `${(sec / 60).toFixed(1)} min`;
   return `${(sec / 3600).toFixed(2)} hrs`;
 };
